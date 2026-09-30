@@ -6,35 +6,35 @@ bits 16
 
 
 ;
-; FAT12 header
+; заголовок FAT12
 ; 
 jmp short start
 nop
 
-bdb_oem:                    db 'MSWIN4.1'           ; 8 bytes
+bdb_oem:                    db 'MSWIN4.1'           ; 8 байт
 bdb_bytes_per_sector:       dw 512
 bdb_sectors_per_cluster:    db 1
 bdb_reserved_sectors:       dw 1
 bdb_fat_count:              db 2
 bdb_dir_entries_count:      dw 0E0h
-bdb_total_sectors:          dw 2880                 ; 2880 * 512 = 1.44MB
-bdb_media_descriptor_type:  db 0F0h                 ; F0 = 3.5" floppy disk
-bdb_sectors_per_fat:        dw 9                    ; 9 sectors/fat
+bdb_total_sectors:          dw 2880                 ; 2880 * 512 = 1.44 МБ
+bdb_media_descriptor_type:  db 0F0h                 ; F0 = дискета 3.5"
+bdb_sectors_per_fat:        dw 9                    ; 9 секторов на FAT
 bdb_sectors_per_track:      dw 18
 bdb_heads:                  dw 2
 bdb_hidden_sectors:         dd 0
 bdb_large_sector_count:     dd 0
 
-; extended boot record
-ebr_drive_number:           db 0                    ; 0x00 floppy, 0x80 hdd, useless
-                            db 0                    ; reserved
+; расширенная загрузочная запись
+ebr_drive_number:           db 0                    ; 0x00 дискета, 0x80 жёсткий диск, бесполезно
+                            db 0                    ; зарезервировано
 ebr_signature:              db 29h
-ebr_volume_id:              db 12h, 34h, 56h, 78h   ; serial number, value doesn't matter
-ebr_volume_label:           db 'NANOBYTE OS'        ; 11 bytes, padded with spaces
-ebr_system_id:              db 'FAT12   '           ; 8 bytes
+ebr_volume_id:              db 12h, 34h, 56h, 78h   ; серийный номер, значение не важно
+ebr_volume_label:           db 'NANOBYTE OS'        ; 11 байт, дополнено пробелами
+ebr_system_id:              db 'FAT12   '           ; 8 байт
 
 ;
-; Code goes here
+; здесь начинается код
 ;
 
 start:
@@ -42,23 +42,23 @@ start:
 
 
 ;
-; Prints a string to the screen
-; Params:
-;   - ds:si points to string
+; выводит строку на экран
+; параметры:
+;   - ds:si указывает на строку
 ;
 puts:
-    ; save registers we will modify
+    ; сохраняем регистры, которые будем изменять
     push si
     push ax
     push bx
 
 .loop:
-    lodsb               ; loads next character in al
-    or al, al           ; verify if next character is null?
+    lodsb               ; загружаем следующий символ в al
+    or al, al           ; проверяем, не нулевой ли следующий символ?
     jz .done
 
-    mov ah, 0x0E        ; call bios interrupt
-    mov bh, 0           ; set page number to 0
+    mov ah, 0x0E        ; вызов прерывания bios
+    mov bh, 0           ; устанавливаем номер страницы в 0
     int 0x10
 
     jmp .loop
@@ -71,34 +71,34 @@ puts:
     
 
 main:
-    ; setup data segments
-    mov ax, 0                   ; can't set ds/es directly
+    ; настраиваем сегменты данных
+    mov ax, 0                   ; нельзя задать ds/es напрямую
     mov ds, ax
     mov es, ax
     
-    ; setup stack
+    ; настраиваем стек
     mov ss, ax
-    mov sp, 0x7C00              ; stack grows downwards from where we are loaded in memory
+    mov sp, 0x7C00              ; стек растёт вниз от места, куда мы загружены
 
-    ; read something from floppy disk
-    ; BIOS should set DL to drive number
+    ; читаем что-нибудь с дискеты
+    ; bios должен установить dl в номер диска
     mov [ebr_drive_number], dl
 
-    mov ax, 1                   ; LBA=1, second sector from disk
-    mov cl, 1                   ; 1 sector to read
-    mov bx, 0x7E00              ; data should be after the bootloader
+    mov ax, 1                   ; LBA=1, второй сектор диска
+    mov cl, 1                   ; читаем 1 сектор
+    mov bx, 0x7E00              ; данные должны быть после загрузчика
     call disk_read
 
-    ; print hello world message
+    ; выводим приветственное сообщение
     mov si, msg_hello
     call puts
 
-    cli                         ; disable interrupts, this way CPU can't get out of "halt" state
+    cli                         ; отключаем прерывания, так процессор не сможет выйти из состояния "halt"
     hlt
 
 
 ;
-; Error handlers
+; обработчики ошибок
 ;
 
 floppy_error:
@@ -108,26 +108,26 @@ floppy_error:
 
 wait_key_and_reboot:
     mov ah, 0
-    int 16h                     ; wait for keypress
-    jmp 0FFFFh:0                ; jump to beginning of BIOS, should reboot
+    int 16h                     ; ждём нажатия клавиши
+    jmp 0FFFFh:0                ; переходим в начало bios, должен произойти перезапуск
 
 .halt:
-    cli                         ; disable interrupts, this way CPU can't get out of "halt" state
+    cli                         ; отключаем прерывания, так процессор не сможет выйти из состояния "halt"
     hlt
 
 
 ;
-; Disk routines
+; процедуры работы с диском
 ;
 
 ;
-; Converts an LBA address to a CHS address
-; Parameters:
-;   - ax: LBA address
-; Returns:
-;   - cx [bits 0-5]: sector number
-;   - cx [bits 6-15]: cylinder
-;   - dh: head
+; преобразует адрес LBA в адрес CHS
+; параметры:
+;   - ax: адрес LBA
+; возвращает:
+;   - cx [биты 0-5]: номер сектора
+;   - cx [биты 6-15]: цилиндр
+;   - dh: головка
 ;
 
 lba_to_chs:
@@ -136,56 +136,56 @@ lba_to_chs:
     push dx
 
     xor dx, dx                          ; dx = 0
-    div word [bdb_sectors_per_track]    ; ax = LBA / SectorsPerTrack
-                                        ; dx = LBA % SectorsPerTrack
+    div word [bdb_sectors_per_track]    ; ax = LBA / секторов_на_дорожке
+                                        ; dx = LBA % секторов_на_дорожке
 
-    inc dx                              ; dx = (LBA % SectorsPerTrack + 1) = sector
-    mov cx, dx                          ; cx = sector
+    inc dx                              ; dx = (LBA % секторов_на_дорожке + 1) = сектор
+    mov cx, dx                          ; cx = сектор
 
     xor dx, dx                          ; dx = 0
-    div word [bdb_heads]                ; ax = (LBA / SectorsPerTrack) / Heads = cylinder
-                                        ; dx = (LBA / SectorsPerTrack) % Heads = head
-    mov dh, dl                          ; dh = head
-    mov ch, al                          ; ch = cylinder (lower 8 bits)
+    div word [bdb_heads]                ; ax = (LBA / секторов_на_дорожке) / головок = цилиндр
+                                        ; dx = (LBA / секторов_на_дорожке) % головок = головка
+    mov dh, dl                          ; dh = головка
+    mov ch, al                          ; ch = цилиндр (младшие 8 бит)
     shl ah, 6
-    or cl, ah                           ; put upper 2 bits of cylinder in CL
+    or cl, ah                           ; помещаем старшие 2 бита цилиндра в CL
 
     pop ax
-    mov dl, al                          ; restore DL
+    mov dl, al                          ; восстанавливаем DL
     pop ax
     ret
 
 
 ;
-; Reads sectors from a disk
-; Parameters:
-;   - ax: LBA address
-;   - cl: number of sectors to read (up to 128)
-;   - dl: drive number
-;   - es:bx: memory address where to store read data
+; читает секторы с диска
+; параметры:
+;   - ax: адрес LBA
+;   - cl: количество секторов для чтения (до 128)
+;   - dl: номер диска
+;   - es:bx: адрес в памяти, куда сохранить прочитанные данные
 ;
 disk_read:
 
-    push ax                             ; save registers we will modify
+    push ax                             ; сохраняем регистры, которые будем изменять
     push bx
     push cx
     push dx
     push di
 
-    push cx                             ; temporarily save CL (number of sectors to read)
-    call lba_to_chs                     ; compute CHS
-    pop ax                              ; AL = number of sectors to read
+    push cx                             ; временно сохраняем CL (количество секторов для чтения)
+    call lba_to_chs                     ; вычисляем CHS
+    pop ax                              ; AL = количество секторов для чтения
     
     mov ah, 02h
-    mov di, 3                           ; retry count
+    mov di, 3                           ; количество попыток
 
 .retry:
-    pusha                               ; save all registers, we don't know what bios modifies
-    stc                                 ; set carry flag, some BIOS'es don't set it
-    int 13h                             ; carry flag cleared = success
-    jnc .done                           ; jump if carry not set
+    pusha                               ; сохраняем все регистры, мы не знаем, что изменяет bios
+    stc                                 ; устанавливаем флаг переноса, некоторые bios его не устанавливают
+    int 13h                             ; флаг переноса сброшен = успех
+    jnc .done                           ; переход, если флаг переноса не установлен
 
-    ; read failed
+    ; чтение не удалось
     popa
     call disk_reset
 
@@ -194,7 +194,7 @@ disk_read:
     jnz .retry
 
 .fail:
-    ; all attempts are exhausted
+    ; все попытки исчерпаны
     jmp floppy_error
 
 .done:
@@ -204,14 +204,14 @@ disk_read:
     pop dx
     pop cx
     pop bx
-    pop ax                             ; restore registers modified
+    pop ax                             ; восстанавливаем изменённые регистры
     ret
 
 
 ;
-; Resets disk controller
-; Parameters:
-;   dl: drive number
+; сбрасывает контроллер диска
+; параметры:
+;   dl: номер диска
 ;
 disk_reset:
     pusha
