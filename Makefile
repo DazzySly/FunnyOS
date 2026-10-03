@@ -51,7 +51,11 @@ kernel: $(KERNEL_BIN)
 $(KERNEL_BIN): $(KERNEL_SRC)
 	@mkdir -p $(BUILD_DIR)
 	$(ASM) $< -f bin -o $@
-
+	@SIZE=$$(stat -c%s $@); \
+	if [ $$SIZE -gt 8192 ]; then \
+	    echo "ОШИБКА: ядро $$SIZE байт, превышает 16 секторов (8192 байт)"; \
+	    exit 1; \
+	fi
 
 run: $(FLOPPY_IMG)
 	$(QEMU) -fda $(FLOPPY_IMG)
