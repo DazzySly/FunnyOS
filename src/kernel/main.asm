@@ -5,6 +5,8 @@ bits 16
 %define ENDL 0x0D, 0x0A
 %define MAX_CMD 64
 %define HIST_SIZE 8
+%define OS_NAME 'FunnyOS'
+%define OS_VERSION '0.2'
 
 
 start:
@@ -13,8 +15,6 @@ start:
 
 ;
 ; выводит строку на экран
-; параметры:
-;   - ds:si указывает на строку
 ;
 puts:
     push si
@@ -169,7 +169,6 @@ read_line:
 ; стирает текущий ввод и загружает историю по индексу [hist_pos]
 ;
 hist_load:
-    ; стираем символы с экрана
     mov cx, di
     sub cx, buffer
     jcxz .nothing
@@ -183,7 +182,6 @@ hist_load:
     loop .erase
 .nothing:
 
-    ; загружаем строку из истории
     mov ax, [hist_pos]
     mov bx, MAX_CMD
     mul bx
@@ -212,7 +210,6 @@ hist_push:
     cmp byte [buffer], 0
     je .ret
 
-    ; сдвигаем записи вниз
     mov cx, HIST_SIZE - 1
     mov si, hist_buf + (HIST_SIZE - 2) * MAX_CMD
     mov di, hist_buf + (HIST_SIZE - 1) * MAX_CMD
@@ -234,7 +231,6 @@ hist_push:
     pop cx
     loop .shift
 
-    ; копируем buffer в первую ячейку
     mov si, buffer
     mov di, hist_buf
     call str_copy
@@ -358,6 +354,16 @@ process_command:
     jc cmd_mem
 
     mov si, buffer
+    mov di, cmd_beep_str
+    call strcmp_ci
+    jc cmd_beep
+
+    mov si, buffer
+    mov di, cmd_ver_str
+    call strcmp_ci
+    jc cmd_ver
+
+    mov si, buffer
     mov di, cmd_reboot_str
     call strcmp_ci
     jc cmd_reboot
@@ -403,7 +409,7 @@ cmd_clear:
 
 
 ;
-; команда echo — вывести текст
+; команда echo
 ;
 cmd_echo:
     mov si, buffer
@@ -430,7 +436,7 @@ cmd_echo:
 
 
 ;
-; команда larp — ASCII-рамка
+; команда larp
 ;
 cmd_larp:
     mov si, larp_art
@@ -439,7 +445,7 @@ cmd_larp:
 
 
 ;
-; команда mem — сколько памяти видит BIOS
+; команда mem
 ;
 cmd_mem:
     int 0x12
@@ -452,7 +458,96 @@ cmd_mem:
 
 
 ;
-; команда reboot — перезагрузка
+; команда beep — писк через PC speaker
+;
+cmd_beep:
+    mov bx, 400
+    mov cx, 20
+    call speaker_tone
+    ret
+
+
+;
+; издаёт тон через PC speaker
+; параметры:
+;   - bx: частота в герцах
+;   - cx: длительность в сотых долях секунды
+;
+speaker_tone:
+    push ax
+    push bx
+    push cx
+    push dx
+
+    mov ax, 0x34DC
+    mov dx, 0x0012
+    div bx
+    mov bx, ax
+
+    mov al, 0xB6
+    out 0x43, al
+
+    mov al, bl
+    out 0x42, al
+    mov al, bh
+    out 0x42, al
+
+    in al, 0x61
+    or al, 0x03
+    out 0x61, al
+
+    call speaker_delay
+
+    in al, 0x61
+    and al, 0xFC
+    out 0x61, al
+
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
+;
+; задержка через BIOS Wait (int 15h ah=86h)
+; параметры:
+;   - cx: количество сотых долей секунды
+;
+speaker_delay:
+    push ax
+    push bx
+    push cx
+    push dx
+
+    mov ax, cx
+    mov bx, 10000
+    mul bx
+
+    mov cx, dx
+    mov dx, ax
+
+    mov ah, 0x86
+    int 0x15
+
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
+;
+; команда ver — версия FunnyOS
+;
+cmd_ver:
+    mov si, msg_ver
+    call puts
+    ret
+
+
+;
+; команда reboot
 ;
 cmd_reboot:
     mov cx, 0xFFFF
@@ -473,7 +568,7 @@ cmd_reboot:
 
 
 ;
-; команда history — показать историю
+; команда history
 ;
 cmd_history:
     mov cx, HIST_SIZE
@@ -513,7 +608,6 @@ main:
     mov ss, ax
     mov sp, 0x7C00
 
-    ; инициализация истории — все пустые
     mov di, hist_buf
     mov cx, HIST_SIZE * MAX_CMD
     xor al, al
@@ -544,14 +638,20 @@ msg_help:       db 'Commands:', ENDL
                 db '  echo <text>  - print text', ENDL
                 db '  larp         - GIGA larp', ENDL
                 db '  mem          - show memory size', ENDL
-                db '  reboot       - reboot LOL', ENDL
+                db '  beep         - beep bop', ENDL
+                db '  ver          - show version', ENDL
+                db '  reboot       - reboot Lol', ENDL
                 db '  history      - show command history', ENDL
-                db '  help         - this help', ENDL
+                db '  help         - get help', ENDL
                 db '  clear / cls  - clear screen', ENDL, 0
 msg_unknown:    db 'Unknown command', ENDL, 0
 msg_mem:        db 'Memory: ', 0
 msg_mem_kb:     db ' KB', ENDL, 0
 msg_hist_prefix: db '  ', 0
+msg_ver:        db 'FunnyOS v0.2', ENDL
+                db 'A tiny 16-bit OS written in NASM', ENDL
+                db 'Boot: BIOS, 2-stage loader, USB-HDD', ENDL
+                db 'Build: ', __DATE__, ' ', __TIME__, ENDL, 0
 
 cmd_echo_str:    db 'echo', 0
 cmd_help_str:    db 'help', 0
@@ -559,11 +659,10 @@ cmd_clear_str:   db 'clear', 0
 cmd_cls_str:     db 'cls', 0
 cmd_larp_str:    db 'larp', 0
 cmd_mem_str:     db 'mem', 0
+cmd_beep_str:    db 'beep', 0
+cmd_ver_str:     db 'ver', 0
 cmd_reboot_str:  db 'reboot', 0
 cmd_history_str: db 'history', 0
-
-
-; ========== larp арт (строка 333) ==========
 
 larp_art:
     db '  +======================================+', ENDL
@@ -585,7 +684,6 @@ larp_art:
     db '  |                   (lirili lariLARP)  |', ENDL
     db '  |                                      |', ENDL
     db '  +======================================+', ENDL, 0
-
 
 buffer:         times MAX_CMD db 0
 cur_pos:        dw 0
