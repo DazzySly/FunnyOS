@@ -5,8 +5,6 @@ bits 16
 %define ENDL 0x0D, 0x0A
 %define MAX_CMD 64
 %define HIST_SIZE 8
-%define OS_NAME 'FunnyOS'
-%define OS_VERSION '0.2'
 
 
 start:
@@ -20,18 +18,14 @@ puts:
     push si
     push ax
     push bx
-
 .loop:
     lodsb
     or al, al
     jz .done
-
     mov ah, 0x0E
     mov bh, 0
     int 0x10
-
     jmp .loop
-
 .done:
     pop bx
     pop ax
@@ -50,17 +44,15 @@ putc:
 
 
 ;
-; выводит беззнаковое число из ax в десятичном виде
+; выводит беззнаковое число из ax
 ;
 print_dec:
     push ax
     push bx
     push cx
     push dx
-
     mov cx, 0
     mov bx, 10
-
 .divide:
     xor dx, dx
     div bx
@@ -68,14 +60,12 @@ print_dec:
     inc cx
     test ax, ax
     jnz .divide
-
 .print:
     pop dx
     mov al, dl
     add al, '0'
     call putc
     loop .print
-
     pop dx
     pop cx
     pop bx
@@ -84,7 +74,7 @@ print_dec:
 
 
 ;
-; копирует строку si в di (с нуль-терминатором)
+; копирует строку si в di
 ;
 str_copy:
 .loop:
@@ -97,38 +87,78 @@ str_copy:
 
 
 ;
-; читает строку с клавиатуры в buffer, поддерживает стрелки
+; пропускает пробелы по SI
+;
+skip_spaces:
+    push ax
+.loop:
+    mov al, [si]
+    cmp al, ' '
+    jne .done
+    inc si
+    jmp .loop
+.done:
+    pop ax
+    ret
+
+
+;
+; парсит число из SI в AX
+;
+parse_num:
+    push bx
+    push cx
+    xor bx, bx
+    xor dx, dx
+.loop:
+    mov al, [si]
+    cmp al, '0'
+    jb .done
+    cmp al, '9'
+    ja .done
+    push ax
+    mov ax, bx
+    mov cx, 10
+    mul cx
+    mov bx, ax
+    pop ax
+    sub al, '0'
+    mov ah, 0
+    add bx, ax
+    inc si
+    inc dx
+    jmp .loop
+.done:
+    mov ax, bx
+    pop cx
+    pop bx
+    ret
+
+
+;
+; читает строку с клавиатуры
 ;
 read_line:
     mov di, buffer
     mov word [hist_pos], HIST_SIZE
-
 .read:
     mov ah, 0x00
     int 0x16
-
     cmp al, 0x0D
     je .done
-
     cmp al, 0x08
     je .backspace
-
     cmp ah, 0x48
     je .up
-
     cmp ah, 0x50
     je .down
-
     test al, al
     jz .read
-
     cmp di, buffer + MAX_CMD - 1
     je .read
-
     stosb
     call putc
     jmp .read
-
 .backspace:
     cmp di, buffer
     je .read
@@ -140,21 +170,18 @@ read_line:
     mov al, 0x08
     call putc
     jmp .read
-
 .up:
     cmp word [hist_pos], 0
     je .read
     dec word [hist_pos]
     call hist_load
     jmp .read
-
 .down:
     cmp word [hist_pos], HIST_SIZE - 1
     jae .read
     inc word [hist_pos]
     call hist_load
     jmp .read
-
 .done:
     mov al, 0
     stosb
@@ -166,7 +193,7 @@ read_line:
 
 
 ;
-; стирает текущий ввод и загружает историю по индексу [hist_pos]
+; загружает историю по индексу [hist_pos]
 ;
 hist_load:
     mov cx, di
@@ -188,7 +215,6 @@ hist_load:
     add ax, hist_buf
     mov si, ax
     mov di, buffer
-
 .copy:
     lodsb
     test al, al
@@ -196,7 +222,6 @@ hist_load:
     stosb
     call putc
     jmp .copy
-
 .done:
     mov al, 0
     stosb
@@ -234,43 +259,37 @@ hist_push:
     mov si, buffer
     mov di, hist_buf
     call str_copy
-
 .ret:
     mov word [hist_pos], HIST_SIZE
     ret
 
 
 ;
-; сравнивает две строки без учёта регистра
+; сравнение без учёта регистра
 ;
 strcmp_ci:
 .loop:
     mov al, [si]
     mov bl, [di]
-
     cmp al, 'A'
     jb .a_done
     cmp al, 'Z'
     ja .a_done
     or al, 0x20
 .a_done:
-
     cmp bl, 'A'
     jb .b_done
     cmp bl, 'Z'
     ja .b_done
     or bl, 0x20
 .b_done:
-
     cmp al, bl
     jne .no
     test al, al
     jz .yes
-
     inc si
     inc di
     jmp .loop
-
 .yes:
     stc
     ret
@@ -280,7 +299,7 @@ strcmp_ci:
 
 
 ;
-; проверяет, начинается ли строка si с di
+; проверка starts_with
 ;
 starts_with:
     push si
@@ -326,8 +345,6 @@ process_command:
     cmp byte [buffer], 0
     je .ret
 
-    call hist_push
-
     mov si, buffer
     mov di, cmd_help_str
     call strcmp_ci
@@ -354,11 +371,6 @@ process_command:
     jc cmd_mem
 
     mov si, buffer
-    mov di, cmd_beep_str
-    call strcmp_ci
-    jc cmd_beep
-
-    mov si, buffer
     mov di, cmd_ver_str
     call strcmp_ci
     jc cmd_ver
@@ -374,6 +386,26 @@ process_command:
     jc cmd_history
 
     mov si, buffer
+    mov di, cmd_color_str
+    call strcmp_ci
+    jc cmd_color
+
+    mov si, buffer
+    mov di, cmd_color_str
+    call starts_with
+    jc cmd_color
+
+    mov si, buffer
+    mov di, cmd_beep_str
+    call strcmp_ci
+    jc cmd_beep
+
+    mov si, buffer
+    mov di, cmd_beep_str
+    call starts_with
+    jc cmd_beep
+
+    mov si, buffer
     mov di, cmd_echo_str
     call strcmp_ci
     jc cmd_echo
@@ -385,32 +417,23 @@ process_command:
 
     mov si, msg_unknown
     call puts
-
 .ret:
     ret
 
 
 ;
-; команда help
+; команды
 ;
 cmd_help:
     mov si, msg_help
     call puts
     ret
 
-
-;
-; команда clear (и cls)
-;
 cmd_clear:
     mov ax, 0x0003
     int 0x10
     ret
 
-
-;
-; команда echo
-;
 cmd_echo:
     mov si, buffer
     add si, 5
@@ -419,14 +442,12 @@ cmd_echo:
     cmp al, ' '
     je .skip_space
     dec si
-
 .print:
     lodsb
     test al, al
     jz .done
     call putc
     jmp .print
-
 .done:
     mov al, 0x0D
     call putc
@@ -434,19 +455,11 @@ cmd_echo:
     call putc
     ret
 
-
-;
-; команда larp
-;
 cmd_larp:
     mov si, larp_art
     call puts
     ret
 
-
-;
-; команда mem
-;
 cmd_mem:
     int 0x12
     mov si, msg_mem
@@ -456,90 +469,6 @@ cmd_mem:
     call puts
     ret
 
-
-;
-; команда beep — писк через PC speaker
-;
-cmd_beep:
-    mov bx, 400
-    mov cx, 20
-    call speaker_tone
-    ret
-
-
-;
-; издаёт тон через PC speaker
-; параметры:
-;   - bx: частота в герцах
-;   - cx: длительность в сотых долях секунды
-;
-speaker_tone:
-    push ax
-    push bx
-    push cx
-    push dx
-
-    mov ax, 0x34DC
-    mov dx, 0x0012
-    div bx
-    mov bx, ax
-
-    mov al, 0xB6
-    out 0x43, al
-
-    mov al, bl
-    out 0x42, al
-    mov al, bh
-    out 0x42, al
-
-    in al, 0x61
-    or al, 0x03
-    out 0x61, al
-
-    call speaker_delay
-
-    in al, 0x61
-    and al, 0xFC
-    out 0x61, al
-
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-
-;
-; задержка через BIOS Wait (int 15h ah=86h)
-; параметры:
-;   - cx: количество сотых долей секунды
-;
-speaker_delay:
-    push ax
-    push bx
-    push cx
-    push dx
-
-    mov ax, cx
-    mov bx, 10000
-    mul bx
-
-    mov cx, dx
-    mov dx, ax
-
-    mov ah, 0x86
-    int 0x15
-
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-
-;
-; команда ver — версия FunnyOS
-;
 cmd_ver:
     mov si, msg_ver
     call puts
@@ -547,7 +476,178 @@ cmd_ver:
 
 
 ;
-; команда reboot
+; команда color — устанавливает цвет текста через ANSI escape
+;
+cmd_color:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+
+    mov si, buffer
+    add si, 5
+    call skip_spaces
+
+    cmp byte [si], 0
+    je .usage
+
+    call parse_num
+    test dx, dx
+    jz .usage
+
+    cmp ax, 15
+    ja .usage
+
+    mov bx, ax
+
+    ; ESC [
+    mov al, 27
+    call putc
+    mov al, '['
+    call putc
+
+    cmp bl, 8
+    jb .low
+    mov al, '9'
+    call putc
+    sub bl, 8
+    jmp .digit
+.low:
+    mov al, '3'
+    call putc
+
+.digit:
+    mov al, bl
+    add al, '0'
+    call putc
+
+    mov al, 'm'
+    call putc
+
+    ; подтверждение
+    mov si, msg_color_set
+    call puts
+    mov ax, bx
+    call print_dec
+    mov al, 0x0D
+    call putc
+    mov al, 0x0A
+    call putc
+
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+.usage:
+    mov si, msg_color_usage
+    call puts
+
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
+;
+; beep
+;
+cmd_beep:
+    push bx
+    push cx
+    push dx
+    push si
+    mov bx, 1000
+    mov cx, 20
+    mov si, buffer
+    add si, 4
+    call skip_spaces
+    cmp byte [si], 0
+    je .play
+    call parse_num
+    test dx, dx
+    jz .play
+    mov bx, ax
+    cmp bx, 20000
+    jbe .freq_ok
+    mov bx, 1000
+.freq_ok:
+    call skip_spaces
+    cmp byte [si], 0
+    je .play
+    call parse_num
+    test dx, dx
+    jz .play
+    mov cx, 10
+    xor dx, dx
+    div cx
+    test ax, ax
+    jnz .have_ms
+    mov ax, 1
+.have_ms:
+    mov cx, ax
+.play:
+    call speaker_tone
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    ret
+
+speaker_tone:
+    push ax
+    push bx
+    push cx
+    push dx
+    mov ax, 0x34DC
+    mov dx, 0x0012
+    div bx
+    mov bx, ax
+    mov al, 0xB6
+    out 0x43, al
+    mov al, bl
+    out 0x42, al
+    mov al, bh
+    out 0x42, al
+    in al, 0x61
+    or al, 0x03
+    out 0x61, al
+    call speaker_delay
+    in al, 0x61
+    and al, 0xFC
+    out 0x61, al
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+speaker_delay:
+    push ax
+    push bx
+    push cx
+    push dx
+    mov ax, cx
+    mov bx, 10000
+    mul bx
+    mov cx, dx
+    mov dx, ax
+    mov ah, 0x86
+    int 0x15
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
+;
+; reboot
 ;
 cmd_reboot:
     mov cx, 0xFFFF
@@ -556,11 +656,9 @@ cmd_reboot:
     test al, 0x02
     jz .send_reset
     loop .wait_input
-
 .send_reset:
     mov al, 0xFE
     out 0x64, al
-
 .halt:
     cli
     hlt
@@ -568,7 +666,7 @@ cmd_reboot:
 
 
 ;
-; команда history
+; history
 ;
 cmd_history:
     mov cx, HIST_SIZE
@@ -578,7 +676,6 @@ cmd_history:
     push si
     cmp byte [si], 0
     je .next
-
     mov si, msg_hist_prefix
     call puts
     pop si
@@ -588,7 +685,6 @@ cmd_history:
     call putc
     mov al, 0x0A
     call putc
-
 .next:
     pop si
     add si, MAX_CMD
@@ -598,15 +694,16 @@ cmd_history:
 
 
 ;
-; главная функция
+; main
 ;
 main:
     mov ax, 0
     mov ds, ax
     mov es, ax
-
     mov ss, ax
     mov sp, 0x7C00
+
+    mov [disk_num], dl
 
     mov di, hist_buf
     mov cx, HIST_SIZE * MAX_CMD
@@ -621,8 +718,8 @@ main:
 .main_loop:
     mov si, prompt
     call puts
-
     call read_line
+    call hist_push
     call process_command
     jmp .main_loop
 
@@ -632,24 +729,26 @@ main:
 ;
 
 prompt:         db '> ', 0
-msg_welcome:    db 'FunnyOS v0.2', ENDL
+msg_welcome:    db 'FunnyOS v0.5', ENDL
                 db 'Type "help" for commands.', ENDL, ENDL, 0
 msg_help:       db 'Commands:', ENDL
-                db '  echo <text>  - print text', ENDL
-                db '  larp         - GIGA larp', ENDL
-                db '  mem          - show memory size', ENDL
-                db '  beep         - beep bop', ENDL
-                db '  ver          - show version', ENDL
-                db '  reboot       - reboot Lol', ENDL
-                db '  history      - show command history', ENDL
-                db '  help         - get help', ENDL
-                db '  clear / cls  - clear screen', ENDL, 0
+                db '  echo <text>    - print text', ENDL
+                db '  larp           - GIGA larp', ENDL
+                db '  mem            - show memory size', ENDL
+                db '  beep [hz] [ms] - beep boop', ENDL
+                db '  color <0-15>   - set text color', ENDL
+                db '  ver            - show version', ENDL
+                db '  reboot         - reboot Lol', ENDL
+                db '  history        - show history', ENDL
+                db '  help           - get help.', ENDL
+                db '  clear / cls    - clear screen', ENDL, 0
 msg_unknown:    db 'Unknown command', ENDL, 0
 msg_mem:        db 'Memory: ', 0
 msg_mem_kb:     db ' KB', ENDL, 0
 msg_hist_prefix: db '  ', 0
-msg_ver:        db 'FunnyOS v0.2', ENDL
-                db 'A tiny 16-bit OS written in NASM', ENDL
+msg_color_usage: db 'Usage: color <0-15>', ENDL, 0
+msg_color_set:   db 'Color: ', 0
+msg_ver:        db 'FunnyOS v0.5', ENDL
                 db 'Boot: BIOS, 2-stage loader, USB-HDD', ENDL
                 db 'Build: ', __DATE__, ' ', __TIME__, ENDL, 0
 
@@ -660,6 +759,7 @@ cmd_cls_str:     db 'cls', 0
 cmd_larp_str:    db 'larp', 0
 cmd_mem_str:     db 'mem', 0
 cmd_beep_str:    db 'beep', 0
+cmd_color_str:   db 'color', 0
 cmd_ver_str:     db 'ver', 0
 cmd_reboot_str:  db 'reboot', 0
 cmd_history_str: db 'history', 0
@@ -685,7 +785,12 @@ larp_art:
     db '  |                                      |', ENDL
     db '  +======================================+', ENDL, 0
 
-buffer:         times MAX_CMD db 0
-cur_pos:        dw 0
-hist_pos:       dw HIST_SIZE
-hist_buf:       times HIST_SIZE * MAX_CMD db 0
+;
+; переменные и буферы
+;
+disk_num:        db 0
+
+buffer:          times MAX_CMD db 0
+cur_pos:         dw 0
+hist_pos:        dw HIST_SIZE
+hist_buf:        times HIST_SIZE * MAX_CMD db 0
