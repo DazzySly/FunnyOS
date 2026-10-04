@@ -5,21 +5,13 @@ bits 16
 %define ENDL 0x0D, 0x0A
 
 ;
-; константы FAT12 для образа с -R 16
-;
-%define FAT_START_LBA        16
-%define ROOT_DIR_START_LBA   34
-%define ROOT_DIR_SECTORS     14
-%define DATA_START_LBA       48
-
-;
 ; карта памяти
 ;   0x1000 – 0x7BFF : ядро
 ;   0x7C00 – 0x7DFF : stage1
 ;   0x7E00 – 0x8BFF : stage2
 ;
 %define KERNEL_LBA       8
-%define KERNEL_SECTORS   8
+%define KERNEL_SECTORS   16
 %define KERNEL_LOAD_SEG  0x0000
 %define KERNEL_LOAD_OFF  0x1000
 
@@ -64,22 +56,20 @@ main:
     mov ss, ax
     mov sp, 0x7C00
 
+    ; BIOS передал номер диска в DL — сохраняем
     mov [ebr_drive_number], dl
 
     mov si, msg_stage2
     call puts
 
-    ; читаем ядро напрямую с диска
-    push es
-    mov cx, KERNEL_LOAD_SEG
-    mov es, cx
+    ; читаем ядро с диска
+    push word KERNEL_LOAD_SEG
+    pop es
     mov bx, KERNEL_LOAD_OFF
 
     mov ax, KERNEL_LBA
     mov cx, KERNEL_SECTORS
     call disk_read_multi
-
-    pop es
 
     mov si, msg_jumping
     call puts
@@ -93,7 +83,7 @@ main:
 ; параметры:
 ;   - ax: адрес LBA
 ;   - cx: количество секторов
-;   - bx: адрес в памяти, куда сохранить прочитанные данные
+;   - es:bx: адрес в памяти, куда сохранить прочитанные данные
 ;
 disk_read_multi:
     push ax
@@ -106,7 +96,7 @@ disk_read_multi:
     push bx
     push cx
 
-    mov cl, 1
+    mov cx, 1
     call disk_read
 
     pop cx
@@ -125,36 +115,7 @@ disk_read_multi:
 
 
 ;
-; преобразует адрес LBA в адрес CHS
-; параметры:
-;   - ax: адрес LBA
-; возвращает:
-;   - cx [биты 0-5]: номер сектора
-;   - cx [биты 6-15]: цилиндр
-;   - dh: головка
-;
-lba_to_chs:
-    push ax
-
-    xor dx, dx
-    div word [sectors_per_track]
-
-    inc dx
-    mov cx, dx
-
-    xor dx, dx
-    div word [heads]
-    mov dh, dl
-    mov ch, al
-    shl ah, 6
-    or cl, ah
-
-    pop ax
-    ret
-
-
-;
-; читает один сектор с диска через int 13h ah=02h
+; читает один сектор через int 13h ah=42h (LBA Extended Read)
 ; параметры:
 ;   - ax: адрес LBA
 ;   - es:bx: адрес в памяти, куда сохранить прочитанные данные
@@ -164,44 +125,57 @@ disk_read:
     push bx
     push cx
     push dx
+    push si
     push di
+    push bp
+    push ds
 
     mov di, bx              ; DI = смещение буфера
+    mov cx, es              ; CX = сегмент буфера
 
-    call lba_to_chs         ; CX = CHS, DH = головка
+    sub sp, 16
+    mov bp, sp
 
+    mov byte [bp + 0], 0x10
+    mov byte [bp + 1], 0
+    mov word [bp + 2], 1
+    mov word [bp + 4], di
+    mov word [bp + 6], cx
+    mov word [bp + 8], ax
+    mov word [bp + 10], 0
+    mov word [bp + 12], 0
+    mov word [bp + 14], 0
+
+    mov si, bp
     mov dl, [ebr_drive_number]
-    mov al, 1
-    mov ah, 0x02
-    mov bx, di
-
-    mov di, 3
-
-.retry:
-    pusha
+    mov ah, 0x42
     stc
     int 13h
-    jnc .done
+    jc .fail
 
-    popa
-    call disk_reset
+    add sp, 16
 
-    dec di
-    test di, di
-    jnz .retry
-
-.fail:
-    jmp floppy_error
-
-.done:
-    popa
-
+    pop ds
+    pop bp
     pop di
+    pop si
     pop dx
     pop cx
     pop bx
     pop ax
     ret
+
+.fail:
+    add sp, 16
+    pop ds
+    pop bp
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    jmp floppy_error
 
 
 ;
@@ -240,8 +214,6 @@ wait_key_and_reboot:
 ; данные
 ;
 
-sectors_per_track:  dw 18
-heads:              dw 2
 ebr_drive_number:   db 0
 
 msg_stage2:         db 'Stage2: started', ENDL, 0

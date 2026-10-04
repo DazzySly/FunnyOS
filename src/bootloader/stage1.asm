@@ -6,9 +6,13 @@ bits 16
 
 %define STAGE2_LBA      1
 %define STAGE2_SECTORS  7
-%define STAGE2_ADDR     0x7E00
+%define STAGE2_SEG      0x0000
+%define STAGE2_OFF      0x7E00
 
 
+;
+; заголовок FAT12 (нужен для mkfs.fat и mcopy)
+;
 jmp short start
 nop
 
@@ -38,6 +42,11 @@ start:
     jmp main
 
 
+;
+; выводит строку на экран
+; параметры:
+;   - ds:si указывает на строку
+;
 puts:
     push si
     push ax
@@ -69,23 +78,34 @@ main:
     mov ss, ax
     mov sp, 0x7C00
 
+    ; BIOS передал номер загрузочного диска в DL
     mov [ebr_drive_number], dl
 
     mov si, msg_stage1
     call puts
 
+    ; читаем stage2 с диска
     mov ax, STAGE2_LBA
     mov cx, STAGE2_SECTORS
-    mov bx, STAGE2_ADDR
+    push word STAGE2_SEG
+    pop es
+    mov bx, STAGE2_OFF
     call disk_read_multi
 
     mov si, msg_jump
     call puts
 
     mov dl, [ebr_drive_number]
-    jmp 0x0000:STAGE2_ADDR
+    jmp STAGE2_SEG:STAGE2_OFF
 
 
+;
+; читает N секторов, начиная с LBA в ax
+; параметры:
+;   - ax: адрес LBA
+;   - cx: количество секторов
+;   - es:bx: адрес в памяти, куда сохранить прочитанные данные
+;
 disk_read_multi:
     push ax
     push bx
@@ -97,7 +117,7 @@ disk_read_multi:
     push bx
     push cx
 
-    mov cl, 1
+    mov cx, 1
     call disk_read
 
     pop cx
@@ -115,71 +135,75 @@ disk_read_multi:
     ret
 
 
-lba_to_chs:
-    push ax
-
-    xor dx, dx
-    div word [bdb_sectors_per_track]
-
-    inc dx
-    mov cx, dx
-
-    xor dx, dx
-    div word [bdb_heads]
-    mov dh, dl
-    mov ch, al
-    shl ah, 6
-    or cl, ah
-
-    pop ax
-    ret
-
-
+;
+; читает один сектор через int 13h ah=42h (LBA Extended Read)
+; параметры:
+;   - ax: адрес LBA
+;   - es:bx: адрес в памяти, куда сохранить прочитанные данные
+;
 disk_read:
     push ax
     push bx
     push cx
     push dx
+    push si
     push di
+    push bp
+    push ds
 
-    mov di, bx
+    ; сохраняем буфер
+    mov di, bx              ; DI = смещение буфера
+    mov cx, es              ; CX = сегмент буфера
 
-    call lba_to_chs
+    ; резервируем 16 байт под DAP
+    sub sp, 16
+    mov bp, sp
 
+    mov byte [bp + 0], 0x10     ; размер DAP
+    mov byte [bp + 1], 0        ; зарезервировано
+    mov word [bp + 2], 1        ; количество секторов
+    mov word [bp + 4], di       ; смещение буфера
+    mov word [bp + 6], cx       ; сегмент буфера
+    mov word [bp + 8], ax       ; LBA младшее слово
+    mov word [bp + 10], 0
+    mov word [bp + 12], 0
+    mov word [bp + 14], 0
+
+    mov si, bp                  ; SI = указатель на DAP
     mov dl, [ebr_drive_number]
-    mov al, 1
-    mov ah, 0x02
-    mov bx, di
-
-    mov di, 3
-
-.retry:
-    pusha
+    mov ah, 0x42
     stc
     int 13h
-    jnc .done
+    jc .fail
 
-    popa
-    call disk_reset
+    add sp, 16
 
-    dec di
-    test di, di
-    jnz .retry
-
-.fail:
-    jmp floppy_error
-
-.done:
-    popa
-
+    pop ds
+    pop bp
     pop di
+    pop si
     pop dx
     pop cx
     pop bx
     pop ax
     ret
 
+.fail:
+    add sp, 16
+    pop ds
+    pop bp
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    jmp floppy_error
 
+
+;
+; сбрасывает контроллер диска
+;
 disk_reset:
     pusha
     mov ah, 0
@@ -189,6 +213,10 @@ disk_reset:
     popa
     ret
 
+
+;
+; обработчики ошибок
+;
 
 floppy_error:
     mov si, msg_read_failed
