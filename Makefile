@@ -58,14 +58,20 @@ $(KERNEL_BIN): $(KERNEL_SRC)
 	fi
 
 
-# запуск в qemu как USB-HDD (флешка)
+# запуск в qemu как USB-HDD (флешка) со звуком
 # BIOS выдаёт DL=0x80, работает int 13h ah=42h
 run: $(FLOPPY_IMG)
+	$(QEMU) -drive file=$(FLOPPY_IMG),format=raw,if=ide \
+	        -audiodev pipewire,id=snd0 \
+	        -machine pcspk-audiodev=snd0
+
+
+# запуск без звука (для быстрой отладки)
+run-mute: $(FLOPPY_IMG)
 	$(QEMU) -drive file=$(FLOPPY_IMG),format=raw,if=ide
 
 
 # запуск как флоппи (для отладки старого режима)
-# BIOS выдаёт DL=0x00, работает int 13h ah=02h
 run-floppy: $(FLOPPY_IMG)
 	$(QEMU) -fda $(FLOPPY_IMG)
 
