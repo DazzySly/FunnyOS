@@ -13,7 +13,7 @@ STAGE2_BIN = $(BUILD_DIR)/stage2.bin
 KERNEL_BIN = $(BUILD_DIR)/KERNEL.BIN
 FLOPPY_IMG = $(BUILD_DIR)/main_floppy.img
 
-.PHONY: all floppy_image stage1 stage2 kernel run clean
+.PHONY: all floppy_image stage1 stage2 kernel run run-floppy run-hdd clean
 
 
 all: floppy_image
@@ -57,8 +57,21 @@ $(KERNEL_BIN): $(KERNEL_SRC)
 	    exit 1; \
 	fi
 
+
+# запуск в qemu как USB-HDD (флешка)
+# BIOS выдаёт DL=0x80, работает int 13h ah=42h
 run: $(FLOPPY_IMG)
+	$(QEMU) -drive file=$(FLOPPY_IMG),format=raw,if=ide
+
+
+# запуск как флоппи (для отладки старого режима)
+# BIOS выдаёт DL=0x00, работает int 13h ah=02h
+run-floppy: $(FLOPPY_IMG)
 	$(QEMU) -fda $(FLOPPY_IMG)
+
+
+# псевдоним для явности
+run-hdd: run
 
 
 clean:
