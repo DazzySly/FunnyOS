@@ -10,13 +10,31 @@ bits 16
 %define SCREEN_COLS 80
 %define SCREEN_ROWS 25
 
+; цвета
+%define C_BLACK      0x00
+%define C_BLUE       0x01
+%define C_GREEN      0x02
+%define C_CYAN       0x03
+%define C_RED        0x04
+%define C_MAGENTA    0x05
+%define C_BROWN      0x06
+%define C_GRAY       0x07
+%define C_DGRAY      0x08
+%define C_LBLUE      0x09
+%define C_LGREEN     0x0A
+%define C_LCYAN      0x0B
+%define C_LRED       0x0C
+%define C_LMAGENTA   0x0D
+%define C_YELLOW     0x0E
+%define C_WHITE      0x0F
+
 
 start:
     jmp main
 
 
 ;
-; выводит строку на экран (SI = указатель)
+; выводит строку на экран
 ;
 puts:
     push si
@@ -34,7 +52,7 @@ puts:
 
 
 ;
-; выводит один символ из AL в видеопамять
+; выводит символ в VGA
 ;
 putc:
     push ax
@@ -55,7 +73,6 @@ putc:
     cmp al, 0x08
     je .backspace
 
-    ; обычный символ
     push ax
 
     mov bx, [cursor_y]
@@ -485,6 +502,121 @@ starts_with:
 
 
 ;
+; splash screen
+;
+splash_screen:
+    push ax
+    push si
+    push cx
+    push dx
+
+    mov byte [color_attr], C_GRAY
+    call clear_screen
+
+    ; --- рамка ---
+    mov word [cursor_x], 0
+    mov word [cursor_y], 0
+    mov al, '+'
+    call putc
+    mov cx, 78
+.top:
+    mov al, '='
+    call putc
+    loop .top
+    mov al, '+'
+    call putc
+    mov word [cursor_y], 24
+    mov word [cursor_x], 0
+    mov al, '+'
+    call putc
+    mov cx, 78
+.bot:
+    mov al, '='
+    call putc
+    loop .bot
+    mov al, '+'
+    call putc
+
+    ; --- FunnyOS 0.6 (по центру) ---
+    mov byte [color_attr], C_LCYAN
+    mov word [cursor_x], 35
+    mov word [cursor_y], 12
+    mov si, splash_version
+    call puts
+
+    ; --- Loading ---
+    mov byte [color_attr], C_GRAY
+    mov word [cursor_x], 36
+    mov word [cursor_y], 16
+    mov si, splash_loading
+    call puts
+
+    ; --- прогресс-бар ---
+    mov word [cursor_x], 32
+    mov word [cursor_y], 17
+    mov al, '['
+    call putc
+    mov cx, 14
+.progress_empty:
+    mov al, ' '
+    call putc
+    loop .progress_empty
+    mov al, ']'
+    call putc
+
+    ; --- анимация ---
+    mov cx, 14
+    mov word [progress_pos], 0
+.progress_loop:
+    push cx
+    mov cx, 5
+    call delay_50ms
+
+    mov byte [color_attr], C_LGREEN
+    mov ax, [progress_pos]
+    add ax, 33
+    mov [cursor_x], ax
+    mov word [cursor_y], 17
+    mov al, '#'
+    call putc
+
+    inc word [progress_pos]
+    pop cx
+    loop .progress_loop
+
+    mov cx, 8
+    call delay_50ms
+
+    pop dx
+    pop cx
+    pop si
+    pop ax
+    ret
+
+
+;
+; пауза 50 мс * CX
+;
+delay_50ms:
+    push ax
+    push bx
+    push cx
+    push dx
+    mov ax, cx
+    mov bx, 50000
+    mul bx
+    mov cx, dx
+    mov dx, ax
+    mov ah, 0x86
+    int 0x15
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
+;
 ; диспетчер команд
 ;
 process_command:
@@ -571,8 +703,10 @@ process_command:
     call starts_with
     jc cmd_echo
 
+    mov byte [color_attr], C_LRED
     mov si, msg_unknown
     call puts
+    mov byte [color_attr], C_GRAY
 .ret:
     ret
 
@@ -581,7 +715,8 @@ process_command:
 ; команды
 ;
 cmd_help:
-    mov si, msg_help
+    mov byte [color_attr], C_LCYAN
+    mov si, msg_help_body
     call puts
     ret
 
@@ -611,22 +746,26 @@ cmd_echo:
     ret
 
 cmd_larp:
+    mov byte [color_attr], C_YELLOW
     mov si, larp_art
     call puts
+    mov byte [color_attr], C_GRAY
     ret
 
 cmd_mem:
-    int 0x12
     mov si, msg_mem
     call puts
+    int 0x12
     call print_dec
     mov si, msg_mem_kb
     call puts
     ret
 
 cmd_ver:
+    mov byte [color_attr], C_LCYAN
     mov si, msg_ver
     call puts
+    mov byte [color_attr], C_GRAY
     ret
 
 
@@ -674,8 +813,10 @@ cmd_color:
     pop ax
     ret
 .usage:
+    mov byte [color_attr], C_LRED
     mov si, msg_color_usage
     call puts
+    mov byte [color_attr], C_GRAY
     pop si
     pop dx
     pop cx
@@ -770,13 +911,18 @@ cmd_calc:
     mov ax, dx
     jmp .print_result
 .div_zero:
+    mov byte [color_attr], C_LRED
     mov si, msg_div_zero
     call puts
+    mov byte [color_attr], C_GRAY
     jmp .done
 .print_result:
+    mov byte [color_attr], C_GRAY
     mov si, msg_calc_result
     call puts
+    mov byte [color_attr], C_LGREEN
     call print_dec
+    mov byte [color_attr], C_GRAY
     mov al, 0x0D
     call putc
     mov al, 0x0A
@@ -789,8 +935,10 @@ cmd_calc:
     pop ax
     ret
 .usage:
+    mov byte [color_attr], C_LRED
     mov si, msg_calc_usage
     call puts
+    mov byte [color_attr], C_GRAY
     jmp .done
 
 
@@ -909,6 +1057,7 @@ cmd_reboot:
 ; history
 ;
 cmd_history:
+    mov byte [color_attr], C_LCYAN
     mov cx, HIST_SIZE
     mov si, hist_buf
 .line:
@@ -930,6 +1079,7 @@ cmd_history:
     add si, MAX_CMD
     pop cx
     loop .line
+    mov byte [color_attr], C_GRAY
     ret
 
 
@@ -959,7 +1109,6 @@ main:
     mov ss, ax
     mov sp, 0x7C00
 
-    ; спрятать BIOS-курсор
     mov ah, 0x01
     mov cx, 0x2000
     int 0x10
@@ -968,7 +1117,7 @@ main:
 
     mov word [cursor_x], 0
     mov word [cursor_y], 0
-    mov byte [color_attr], 0x07
+    mov byte [color_attr], C_GRAY
 
     mov di, hist_buf
     mov cx, HIST_SIZE * MAX_CMD
@@ -977,17 +1126,27 @@ main:
 
     mov word [hist_pos], HIST_SIZE
 
+    call splash_screen
+
+    mov byte [color_attr], C_GRAY
     call clear_screen
+
     call boot_melody
 
-    mov si, msg_welcome
+    mov byte [color_attr], C_LCYAN
+    mov si, msg_welcome_1
     call puts
 
 .main_loop:
+    mov byte [color_attr], C_LGREEN
     mov si, prompt
     call puts
+    mov byte [color_attr], C_WHITE
+
     call read_line
     call hist_push
+
+    mov byte [color_attr], C_GRAY
     call process_command
     jmp .main_loop
 
@@ -996,12 +1155,13 @@ main:
 ; данные
 ;
 
-prompt:         db '> ', 0
-msg_welcome:    db 'FunnyOS v0.6', ENDL
-                db 'Type "help" for commands.', ENDL, ENDL, 0
-msg_help:       db 'Commands:', ENDL
-                db '  echo <text>       - print text', ENDL
-                db '  calc <a> <op> <b> - calculator (+ - * / %) 65536 - max', ENDL
+prompt:         db 'FunnyOS> ', 0
+msg_welcome_1:  db 'FunnyOS 0.6', ENDL
+msg_welcome_2:  db 'Type "help" for commands.', ENDL, ENDL, 0
+
+msg_help_title: db 'Commands:', ENDL, 0
+msg_help_body:  db '  echo <text>       - print text', ENDL
+                db '  calc <a> <op> <b> - calculator (* + - /) 65535 - max', ENDL
                 db '  larp              - GIGA larp', ENDL
                 db '  mem               - show memory size', ENDL
                 db '  beep [hz] [ms]    - beep boop', ENDL
@@ -1011,17 +1171,19 @@ msg_help:       db 'Commands:', ENDL
                 db '  history           - show history', ENDL
                 db '  help              - get help.', ENDL
                 db '  clear / cls       - clear screen', ENDL, 0
+
 msg_unknown:    db 'Unknown command', ENDL, 0
 msg_mem:        db 'Memory: ', 0
-msg_mem_kb:     db ' TB', ENDL, 0
+msg_mem_kb:     db ' KB', ENDL, 0
 msg_hist_prefix: db '  ', 0
 msg_color_usage: db 'Usage: color <0-15>', ENDL, 0
 msg_color_set:   db 'Color: ', 0
 msg_calc_usage:  db 'Usage: calc <a> <op> <b>', ENDL
-                 db 'Ops: + - * / %', ENDL, 0
+                 db 'a, b: 0..65535', ENDL
+                 db 'Ops: * + - / %', ENDL, 0
 msg_calc_result: db '= ', 0
 msg_div_zero:    db 'Error: division by zero', ENDL, 0
-msg_ver:        db 'FunnyOS v0.6', ENDL
+msg_ver:        db 'FunnyOS 0.6', ENDL
                 db 'Boot: BIOS, 2-stage loader, USB-HDD', ENDL
                 db 'Display: VGA text 80x25 direct', ENDL
                 db 'Build: ', __DATE__, ' ', __TIME__, ENDL, 0
@@ -1039,6 +1201,9 @@ cmd_ver_str:     db 'ver', 0
 cmd_reboot_str:  db 'reboot', 0
 cmd_history_str: db 'history', 0
 
+splash_version: db 'FunnyOS v0.6', 0
+splash_loading: db 'Loading...', 0
+
 larp_art:
     db '  +======================================+', ENDL
     db '  |                                      |', ENDL
@@ -1047,16 +1212,16 @@ larp_art:
     db '  |   ##     ## ##   ##   ##   ##   ##   |', ENDL
     db '  |   ##     #####   ######    ######    |', ENDL
     db '  |   ##     ## ##   ##   ##   ##        |', ENDL
-    db '  |   ##     ## ##   ##   ##   ##        |', ENDL
-    db '  |    ####  ## ##   ##   ##   ##        |', ENDL
-    db '  |                                      |', ENDL
+    db '  |   #####  ## ##   ##   ##   ##        |', ENDL
+    db '  |   #####  ## ##   ##   ##   ##        |', ENDL
+    db '  |     ┗━┅┅┄┄⟞⟦✮⟧⟝┄┄┉┉━┛                |', ENDL
     db '  |             ~ L A R P ~              |', ENDL
     db '  |                                      |', ENDL
     db '  |          the ancient art of          |', ENDL
     db '  |       pretending to be something     |', ENDL
     db '  |             you are not              |', ENDL
     db '  |                                      |', ENDL
-    db '  |                   (lirili lariLARP)  |', ENDL
+    db '  |         ✮         (lirili lariLARP)  |', ENDL
     db '  |                                      |', ENDL
     db '  +======================================+', ENDL, 0
 
@@ -1067,7 +1232,9 @@ disk_num:        db 0
 
 cursor_x:        dw 0
 cursor_y:        dw 0
-color_attr:      db 0x07
+color_attr:      db C_GRAY
+
+progress_pos:    dw 0
 
 calc_a:          dw 0
 calc_b:          dw 0
