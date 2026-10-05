@@ -104,6 +104,10 @@ skip_spaces:
 
 ;
 ; парсит число из SI в AX
+; возвращает:
+;   - AX: число
+;   - DX: количество цифр (0 = не число)
+;   - SI: после последней цифры
 ;
 parse_num:
     push bx
@@ -396,6 +400,16 @@ process_command:
     jc cmd_color
 
     mov si, buffer
+    mov di, cmd_calc_str
+    call strcmp_ci
+    jc cmd_calc
+
+    mov si, buffer
+    mov di, cmd_calc_str
+    call starts_with
+    jc cmd_calc
+
+    mov si, buffer
     mov di, cmd_beep_str
     call strcmp_ci
     jc cmd_beep
@@ -476,7 +490,128 @@ cmd_ver:
 
 
 ;
-; команда color — устанавливает цвет текста через ANSI escape
+; команда calc — калькулятор
+; формат: calc <a> <op> <b>
+; op: + - * / %
+;
+cmd_calc:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+
+    mov si, buffer
+    add si, 4
+    call skip_spaces
+
+    ; первое число
+    call parse_num
+    test dx, dx
+    jz .usage
+    mov [calc_a], ax
+
+    call skip_spaces
+
+    ; оператор
+    mov al, [si]
+    cmp al, '+'
+    je .op_ok
+    cmp al, '-'
+    je .op_ok
+    cmp al, '*'
+    je .op_ok
+    cmp al, '/'
+    je .op_ok
+    cmp al, '%'
+    je .op_ok
+    jmp .usage
+.op_ok:
+    mov [calc_op], al
+    inc si
+
+    call skip_spaces
+
+    ; второе число
+    call parse_num
+    test dx, dx
+    jz .usage
+    mov [calc_b], ax
+
+    ; выполняем
+    mov al, [calc_op]
+    mov bx, [calc_a]
+    mov cx, [calc_b]
+
+    cmp al, '+'
+    je .add
+    cmp al, '-'
+    je .sub
+    cmp al, '*'
+    je .mul
+    cmp al, '/'
+    je .div
+    ; по умолчанию %
+    jmp .mod
+
+.add:
+    mov ax, bx
+    add ax, cx
+    jmp .print_result
+.sub:
+    mov ax, bx
+    sub ax, cx
+    jmp .print_result
+.mul:
+    mov ax, bx
+    mul cx
+    jmp .print_result
+.div:
+    cmp cx, 0
+    je .div_zero
+    mov ax, bx
+    xor dx, dx
+    div cx
+    jmp .print_result
+.mod:
+    cmp cx, 0
+    je .div_zero
+    mov ax, bx
+    xor dx, dx
+    div cx
+    mov ax, dx
+    jmp .print_result
+
+.div_zero:
+    mov si, msg_div_zero
+    call puts
+    jmp .done
+
+.print_result:
+    mov si, msg_calc_result
+    call puts
+    call print_dec
+    mov al, 0x0D
+    call putc
+    mov al, 0x0A
+    call putc
+
+.done:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+.usage:
+    mov si, msg_calc_usage
+    call puts
+    jmp .done
+
+
+;
+; команда color
 ;
 cmd_color:
     push ax
@@ -501,7 +636,6 @@ cmd_color:
 
     mov bx, ax
 
-    ; ESC [
     mov al, 27
     call putc
     mov al, '['
@@ -525,7 +659,6 @@ cmd_color:
     mov al, 'm'
     call putc
 
-    ; подтверждение
     mov si, msg_color_set
     call puts
     mov ax, bx
@@ -545,7 +678,6 @@ cmd_color:
 .usage:
     mov si, msg_color_usage
     call puts
-
     pop si
     pop dx
     pop cx
@@ -694,6 +826,29 @@ cmd_history:
 
 
 ;
+; мелодия при запуске: 400, 800, 1200 Гц
+; длительности: 100, 100, 150 мс (последняя в 1.5 раза дольше)
+;
+boot_melody:
+    ; нота 1: 400 Гц, 100 мс = 10 сотых
+    mov bx, 400
+    mov cx, 10
+    call speaker_tone
+
+    ; нота 2: 800 Гц, 100 мс
+    mov bx, 800
+    mov cx, 10
+    call speaker_tone
+
+    ; нота 3: 1200 Гц, 150 мс = 15 сотых
+    mov bx, 1200
+    mov cx, 15
+    call speaker_tone
+
+    ret
+
+
+;
 ; main
 ;
 main:
@@ -712,6 +867,9 @@ main:
 
     mov word [hist_pos], HIST_SIZE
 
+    ; мелодия при запуске
+    call boot_melody
+
     mov si, msg_welcome
     call puts
 
@@ -729,26 +887,31 @@ main:
 ;
 
 prompt:         db '> ', 0
-msg_welcome:    db 'FunnyOS v0.5', ENDL
+msg_welcome:    db 'FunnyOS v0.4', ENDL
                 db 'Type "help" for commands.', ENDL, ENDL, 0
 msg_help:       db 'Commands:', ENDL
-                db '  echo <text>    - print text', ENDL
-                db '  larp           - GIGA larp', ENDL
-                db '  mem            - show memory size', ENDL
-                db '  beep [hz] [ms] - beep boop', ENDL
-                db '  color <0-15>   - set text color', ENDL
-                db '  ver            - show version', ENDL
-                db '  reboot         - reboot Lol', ENDL
-                db '  history        - show history', ENDL
-                db '  help           - get help.', ENDL
-                db '  clear / cls    - clear screen', ENDL, 0
+                db '  echo <text>       - print text', ENDL
+                db '  calc <a> <op> <b> - calculator (+ - * / %)', ENDL
+                db '  larp              - GIGA larp', ENDL
+                db '  mem               - show memory size', ENDL
+                db '  beep [hz] [ms]    - beep boop', ENDL
+                db '  color <0-15>      - set text color', ENDL
+                db '  ver               - show version', ENDL
+                db '  reboot            - reboot Lol', ENDL
+                db '  history           - show history', ENDL
+                db '  help              - get help.', ENDL
+                db '  clear / cls       - clear screen', ENDL, 0
 msg_unknown:    db 'Unknown command', ENDL, 0
 msg_mem:        db 'Memory: ', 0
-msg_mem_kb:     db ' KB', ENDL, 0
+msg_mem_kb:     db ' TB', ENDL, 0
 msg_hist_prefix: db '  ', 0
 msg_color_usage: db 'Usage: color <0-15>', ENDL, 0
 msg_color_set:   db 'Color: ', 0
-msg_ver:        db 'FunnyOS v0.5', ENDL
+msg_calc_usage:  db 'Usage: calc <a> <op> <b>', ENDL
+                 db 'Ops: + - * / %', ENDL, 0
+msg_calc_result: db '= ', 0
+msg_div_zero:    db 'Error: division by zero', ENDL, 0
+msg_ver:        db 'FunnyOS v0.4', ENDL
                 db 'Boot: BIOS, 2-stage loader, USB-HDD', ENDL
                 db 'Build: ', __DATE__, ' ', __TIME__, ENDL, 0
 
@@ -760,6 +923,7 @@ cmd_larp_str:    db 'larp', 0
 cmd_mem_str:     db 'mem', 0
 cmd_beep_str:    db 'beep', 0
 cmd_color_str:   db 'color', 0
+cmd_calc_str:    db 'calc', 0
 cmd_ver_str:     db 'ver', 0
 cmd_reboot_str:  db 'reboot', 0
 cmd_history_str: db 'history', 0
@@ -789,6 +953,10 @@ larp_art:
 ; переменные и буферы
 ;
 disk_num:        db 0
+
+calc_a:          dw 0
+calc_b:          dw 0
+calc_op:         db 0
 
 buffer:          times MAX_CMD db 0
 cur_pos:         dw 0
