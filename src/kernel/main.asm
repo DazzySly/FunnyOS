@@ -1021,7 +1021,7 @@ msg_calc_usage:  db 'Usage: calc <a> <op> <b>', ENDL
                  db 'Ops: + - * / %', ENDL, 0
 msg_calc_result: db '= ', 0
 msg_div_zero:    db 'Error: division by zero', ENDL, 0
-msg_ver:        db 'FunnyOS v0.8', ENDL
+msg_ver:        db 'FunnyOS v0.6', ENDL
                 db 'Boot: BIOS, 2-stage loader, USB-HDD', ENDL
                 db 'Display: VGA text 80x25 direct', ENDL
                 db 'Build: ', __DATE__, ' ', __TIME__, ENDL, 0
