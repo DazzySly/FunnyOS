@@ -6,45 +6,200 @@ bits 16
 %define MAX_CMD 64
 %define HIST_SIZE 8
 
+%define VGA_BASE 0xB800
+%define SCREEN_COLS 80
+%define SCREEN_ROWS 25
+
 
 start:
     jmp main
 
 
 ;
-; выводит строку на экран
+; выводит строку на экран (SI = указатель)
 ;
 puts:
     push si
     push ax
-    push bx
 .loop:
     lodsb
     or al, al
     jz .done
-    mov ah, 0x0E
-    mov bh, 0
-    int 0x10
+    call putc
     jmp .loop
 .done:
-    pop bx
     pop ax
     pop si
     ret
 
 
 ;
-; выводит один символ из al
+; выводит один символ из AL в видеопамять
 ;
 putc:
-    mov ah, 0x0E
-    mov bh, 0
-    int 0x10
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push es
+
+    push word VGA_BASE
+    pop es
+
+    cmp al, 0x0A
+    je .newline
+    cmp al, 0x0D
+    je .carriage
+    cmp al, 0x08
+    je .backspace
+
+    ; обычный символ
+    push ax
+
+    mov bx, [cursor_y]
+    mov ax, SCREEN_COLS
+    mul bx
+    add ax, [cursor_x]
+    shl ax, 1
+    mov di, ax
+
+    pop ax
+    stosb
+    mov al, [color_attr]
+    stosb
+
+    inc word [cursor_x]
+    cmp word [cursor_x], SCREEN_COLS
+    jb .done
+    mov word [cursor_x], 0
+    inc word [cursor_y]
+    cmp word [cursor_y], SCREEN_ROWS
+    jb .done
+    call scroll_up
+    jmp .done
+
+.newline:
+    mov word [cursor_x], 0
+    inc word [cursor_y]
+    cmp word [cursor_y], SCREEN_ROWS
+    jb .done
+    call scroll_up
+    jmp .done
+
+.carriage:
+    mov word [cursor_x], 0
+    jmp .done
+
+.backspace:
+    cmp word [cursor_x], 0
+    je .done
+    dec word [cursor_x]
+
+    mov bx, [cursor_y]
+    mov ax, SCREEN_COLS
+    mul bx
+    add ax, [cursor_x]
+    shl ax, 1
+    mov di, ax
+
+    mov al, ' '
+    stosb
+    mov al, [color_attr]
+    stosb
+    jmp .done
+
+.done:
+    pop es
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     ret
 
 
 ;
-; выводит беззнаковое число из ax
+; очищает экран
+;
+clear_screen:
+    push ax
+    push cx
+    push di
+    push es
+
+    push word VGA_BASE
+    pop es
+
+    mov di, 0
+    mov cx, SCREEN_COLS * SCREEN_ROWS
+
+    xor ax, ax
+    mov al, ' '
+    mov ah, [color_attr]
+
+.clear:
+    stosw
+    loop .clear
+
+    mov word [cursor_x], 0
+    mov word [cursor_y], 0
+
+    pop es
+    pop di
+    pop cx
+    pop ax
+    ret
+
+
+;
+; сдвигает экран на строку вверх
+;
+scroll_up:
+    push ax
+    push cx
+    push si
+    push di
+    push es
+
+    push word VGA_BASE
+    pop es
+
+    mov si, SCREEN_COLS * 2
+    mov di, 0
+    mov cx, SCREEN_COLS * (SCREEN_ROWS - 1)
+.copy:
+    mov ax, [es:si]
+    mov [es:di], ax
+    add si, 2
+    add di, 2
+    loop .copy
+
+    mov di, SCREEN_COLS * (SCREEN_ROWS - 1) * 2
+    mov cx, SCREEN_COLS
+
+    xor ax, ax
+    mov al, ' '
+    mov ah, [color_attr]
+
+.clear:
+    stosw
+    loop .clear
+
+    mov word [cursor_y], SCREEN_ROWS - 1
+
+    pop es
+    pop di
+    pop si
+    pop cx
+    pop ax
+    ret
+
+
+;
+; печатает беззнаковое число из AX
 ;
 print_dec:
     push ax
@@ -104,10 +259,6 @@ skip_spaces:
 
 ;
 ; парсит число из SI в AX
-; возвращает:
-;   - AX: число
-;   - DX: количество цифр (0 = не число)
-;   - SI: после последней цифры
 ;
 parse_num:
     push bx
@@ -167,11 +318,6 @@ read_line:
     cmp di, buffer
     je .read
     dec di
-    mov al, 0x08
-    call putc
-    mov al, ' '
-    call putc
-    mov al, 0x08
     call putc
     jmp .read
 .up:
@@ -204,10 +350,6 @@ hist_load:
     sub cx, buffer
     jcxz .nothing
 .erase:
-    mov al, 0x08
-    call putc
-    mov al, ' '
-    call putc
     mov al, 0x08
     call putc
     loop .erase
@@ -444,8 +586,7 @@ cmd_help:
     ret
 
 cmd_clear:
-    mov ax, 0x0003
-    int 0x10
+    call clear_screen
     ret
 
 cmd_echo:
@@ -490,9 +631,61 @@ cmd_ver:
 
 
 ;
-; команда calc — калькулятор
-; формат: calc <a> <op> <b>
-; op: + - * / %
+; команда color
+;
+cmd_color:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+
+    mov si, buffer
+    add si, 5
+    call skip_spaces
+
+    cmp byte [si], 0
+    je .usage
+
+    call parse_num
+    test dx, dx
+    jz .usage
+
+    cmp ax, 15
+    ja .usage
+
+    and ax, 0x0F
+    mov [color_attr], al
+
+    mov si, msg_color_set
+    call puts
+    mov ax, [color_attr]
+    and ax, 0x0F
+    call print_dec
+    mov al, 0x0D
+    call putc
+    mov al, 0x0A
+    call putc
+
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+.usage:
+    mov si, msg_color_usage
+    call puts
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+
+;
+; команда calc
 ;
 cmd_calc:
     push ax
@@ -505,7 +698,6 @@ cmd_calc:
     add si, 4
     call skip_spaces
 
-    ; первое число
     call parse_num
     test dx, dx
     jz .usage
@@ -513,7 +705,6 @@ cmd_calc:
 
     call skip_spaces
 
-    ; оператор
     mov al, [si]
     cmp al, '+'
     je .op_ok
@@ -532,13 +723,11 @@ cmd_calc:
 
     call skip_spaces
 
-    ; второе число
     call parse_num
     test dx, dx
     jz .usage
     mov [calc_b], ax
 
-    ; выполняем
     mov al, [calc_op]
     mov bx, [calc_a]
     mov cx, [calc_b]
@@ -551,7 +740,6 @@ cmd_calc:
     je .mul
     cmp al, '/'
     je .div
-    ; по умолчанию %
     jmp .mod
 
 .add:
@@ -581,12 +769,10 @@ cmd_calc:
     div cx
     mov ax, dx
     jmp .print_result
-
 .div_zero:
     mov si, msg_div_zero
     call puts
     jmp .done
-
 .print_result:
     mov si, msg_calc_result
     call puts
@@ -595,7 +781,6 @@ cmd_calc:
     call putc
     mov al, 0x0A
     call putc
-
 .done:
     pop si
     pop dx
@@ -603,87 +788,10 @@ cmd_calc:
     pop bx
     pop ax
     ret
-
 .usage:
     mov si, msg_calc_usage
     call puts
     jmp .done
-
-
-;
-; команда color
-;
-cmd_color:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-
-    mov si, buffer
-    add si, 5
-    call skip_spaces
-
-    cmp byte [si], 0
-    je .usage
-
-    call parse_num
-    test dx, dx
-    jz .usage
-
-    cmp ax, 15
-    ja .usage
-
-    mov bx, ax
-
-    mov al, 27
-    call putc
-    mov al, '['
-    call putc
-
-    cmp bl, 8
-    jb .low
-    mov al, '9'
-    call putc
-    sub bl, 8
-    jmp .digit
-.low:
-    mov al, '3'
-    call putc
-
-.digit:
-    mov al, bl
-    add al, '0'
-    call putc
-
-    mov al, 'm'
-    call putc
-
-    mov si, msg_color_set
-    call puts
-    mov ax, bx
-    call print_dec
-    mov al, 0x0D
-    call putc
-    mov al, 0x0A
-    call putc
-
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
-
-.usage:
-    mov si, msg_color_usage
-    call puts
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
-    ret
 
 
 ;
@@ -825,25 +933,24 @@ cmd_history:
     ret
 
 
-
+;
+; мелодия при запуске
+;
 boot_melody:
-    mov bx, 600
+    mov bx, 400
+    mov cx, 10
+    call speaker_tone
+    mov bx, 800
+    mov cx, 10
+    call speaker_tone
+    mov bx, 1200
     mov cx, 15
     call speaker_tone
-
-    mov bx, 1000
-    mov cx, 15
-    call speaker_tone
-
-    mov bx, 1400
-    mov cx, 25
-    call speaker_tone
-
     ret
 
 
 ;
-; main (мейн(основное(main)))
+; main
 ;
 main:
     mov ax, 0
@@ -852,7 +959,16 @@ main:
     mov ss, ax
     mov sp, 0x7C00
 
+    ; спрятать BIOS-курсор
+    mov ah, 0x01
+    mov cx, 0x2000
+    int 0x10
+
     mov [disk_num], dl
+
+    mov word [cursor_x], 0
+    mov word [cursor_y], 0
+    mov byte [color_attr], 0x07
 
     mov di, hist_buf
     mov cx, HIST_SIZE * MAX_CMD
@@ -861,7 +977,7 @@ main:
 
     mov word [hist_pos], HIST_SIZE
 
-    ; мелодия при запуске
+    call clear_screen
     call boot_melody
 
     mov si, msg_welcome
@@ -881,7 +997,7 @@ main:
 ;
 
 prompt:         db '> ', 0
-msg_welcome:    db 'FunnyOS v0.4', ENDL
+msg_welcome:    db 'FunnyOS v0.6', ENDL
                 db 'Type "help" for commands.', ENDL, ENDL, 0
 msg_help:       db 'Commands:', ENDL
                 db '  echo <text>       - print text', ENDL
@@ -905,8 +1021,9 @@ msg_calc_usage:  db 'Usage: calc <a> <op> <b>', ENDL
                  db 'Ops: + - * / %', ENDL, 0
 msg_calc_result: db '= ', 0
 msg_div_zero:    db 'Error: division by zero', ENDL, 0
-msg_ver:        db 'FunnyOS v0.4', ENDL
+msg_ver:        db 'FunnyOS v0.8', ENDL
                 db 'Boot: BIOS, 2-stage loader, USB-HDD', ENDL
+                db 'Display: VGA text 80x25 direct', ENDL
                 db 'Build: ', __DATE__, ' ', __TIME__, ENDL, 0
 
 cmd_echo_str:    db 'echo', 0
@@ -947,6 +1064,10 @@ larp_art:
 ; переменные и буферы
 ;
 disk_num:        db 0
+
+cursor_x:        dw 0
+cursor_y:        dw 0
+color_attr:      db 0x07
 
 calc_a:          dw 0
 calc_b:          dw 0
