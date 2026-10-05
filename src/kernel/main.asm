@@ -825,31 +825,25 @@ cmd_history:
     ret
 
 
-;
-; мелодия при запуске: 400, 800, 1200 Гц
-; длительности: 100, 100, 150 мс (последняя в 1.5 раза дольше)
-;
+
 boot_melody:
-    ; нота 1: 400 Гц, 100 мс = 10 сотых
-    mov bx, 400
-    mov cx, 10
-    call speaker_tone
-
-    ; нота 2: 800 Гц, 100 мс
-    mov bx, 800
-    mov cx, 10
-    call speaker_tone
-
-    ; нота 3: 1200 Гц, 150 мс = 15 сотых
-    mov bx, 1200
+    mov bx, 600
     mov cx, 15
+    call speaker_tone
+
+    mov bx, 1000
+    mov cx, 15
+    call speaker_tone
+
+    mov bx, 1400
+    mov cx, 25
     call speaker_tone
 
     ret
 
 
 ;
-; main
+; main (мейн(основное(main)))
 ;
 main:
     mov ax, 0
@@ -891,7 +885,7 @@ msg_welcome:    db 'FunnyOS v0.4', ENDL
                 db 'Type "help" for commands.', ENDL, ENDL, 0
 msg_help:       db 'Commands:', ENDL
                 db '  echo <text>       - print text', ENDL
-                db '  calc <a> <op> <b> - calculator (+ - * / %)', ENDL
+                db '  calc <a> <op> <b> - calculator (+ - * / %) 65536 - max', ENDL
                 db '  larp              - GIGA larp', ENDL
                 db '  mem               - show memory size', ENDL
                 db '  beep [hz] [ms]    - beep boop', ENDL
