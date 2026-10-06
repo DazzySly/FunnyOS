@@ -1,83 +1,62 @@
 ASM     = nasm
 QEMU    = qemu-system-i386
 
-SRC_DIR   = src
 BUILD_DIR = build
 
-STAGE1_SRC = $(SRC_DIR)/bootloader/stage1.asm
-STAGE2_SRC = $(SRC_DIR)/bootloader/stage2.asm
-KERNEL_SRC = $(SRC_DIR)/kernel/main.asm
+STAGE1_SRC = src/boot/stage1.asm
+STAGE2_SRC = src/boot/stage2.asm
+KERNEL_SRC = src/kernel/kernel32.asm
 
 STAGE1_BIN = $(BUILD_DIR)/stage1.bin
 STAGE2_BIN = $(BUILD_DIR)/stage2.bin
-KERNEL_BIN = $(BUILD_DIR)/KERNEL.BIN
-FLOPPY_IMG = $(BUILD_DIR)/main_floppy.img
+KERNEL_BIN = $(BUILD_DIR)/kernel32.bin
+IMG        = $(BUILD_DIR)/funnyos32.img
 
-.PHONY: all floppy_image stage1 stage2 kernel run run-floppy run-hdd clean
-
-
-all: floppy_image
+.PHONY: all run run-mute clean
 
 
-floppy_image: $(FLOPPY_IMG)
+all: $(IMG)
 
-$(FLOPPY_IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN)
+
+$(IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN)
 	dd if=/dev/zero of=$@ bs=512 count=2880
-	mkfs.fat -F 12 -R 16 -n "NBOS" $@
 	dd if=$(STAGE1_BIN) of=$@ conv=notrunc
 	dd if=$(STAGE2_BIN) of=$@ bs=512 seek=1 conv=notrunc
-	dd if=$(KERNEL_BIN) of=$@ bs=512 seek=8 conv=notrunc
-	@echo "--- содержимое образа ---"
-	@mdir -i $@ ::
-	@echo "-------------------------"
+	dd if=$(KERNEL_BIN) of=$@ bs=512 seek=3 conv=notrunc
+	@echo "--- image ready: $@ ---"
 
-
-stage1: $(STAGE1_BIN)
 
 $(STAGE1_BIN): $(STAGE1_SRC)
 	@mkdir -p $(BUILD_DIR)
 	$(ASM) $< -f bin -o $@
 
 
-stage2: $(STAGE2_BIN)
-
 $(STAGE2_BIN): $(STAGE2_SRC)
 	@mkdir -p $(BUILD_DIR)
 	$(ASM) $< -f bin -o $@
+	@SIZE=$$(stat -c%s $@); \
+	if [ $$SIZE -gt 3584 ]; then \
+	    echo "ОШИБКА: stage2 $$SIZE байт > 7 секторов"; \
+	    exit 1; \
+	fi
 
-
-kernel: $(KERNEL_BIN)
 
 $(KERNEL_BIN): $(KERNEL_SRC)
 	@mkdir -p $(BUILD_DIR)
 	$(ASM) $< -f bin -o $@
 	@SIZE=$$(stat -c%s $@); \
-	if [ $$SIZE -gt 8192 ]; then \
-	    echo "ОШИБКА: ядро $$SIZE байт, превышает 16 секторов (8192 байт)"; \
+	if [ $$SIZE -gt 6656 ]; then \
+	    echo "ОШИБКА: ядро $$SIZE байт > 13 секторов"; \
 	    exit 1; \
 	fi
 
 
-# запуск в qemu как USB-HDD (флешка) со звуком
-# BIOS выдаёт DL=0x80, работает int 13h ah=42h
-run: $(FLOPPY_IMG)
-	$(QEMU) -drive file=$(FLOPPY_IMG),format=raw,if=ide \
-	        -audiodev pipewire,id=snd0 \
-	        -machine pcspk-audiodev=snd0
+run: $(IMG)
+	$(QEMU) -drive file=$(IMG),format=raw,if=ide
 
 
-# запуск без звука (для быстрой отладки)
-run-mute: $(FLOPPY_IMG)
-	$(QEMU) -drive file=$(FLOPPY_IMG),format=raw,if=ide
-
-
-# запуск как флоппи (для отладки старого режима)
-run-floppy: $(FLOPPY_IMG)
-	$(QEMU) -fda $(FLOPPY_IMG)
-
-
-# псевдоним для явности
-run-hdd: run
+run-mute: $(IMG)
+	$(QEMU) -drive file=$(IMG),format=raw,if=ide
 
 
 clean:
