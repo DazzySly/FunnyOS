@@ -3,7 +3,7 @@ bits 16
 
 %define ENDL 0x0D, 0x0A
 %define KERNEL_LBA      3
-%define KERNEL_SECTORS  13
+%define KERNEL_SECTORS  32
 %define KERNEL_ADDR     0x1000
 
 start:

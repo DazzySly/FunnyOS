@@ -45,8 +45,8 @@ $(KERNEL_BIN): $(KERNEL_SRC)
 	@mkdir -p $(BUILD_DIR)
 	$(ASM) $< -f bin -o $@
 	@SIZE=$$(stat -c%s $@); \
-	if [ $$SIZE -gt 6656 ]; then \
-	    echo "ОШИБКА: ядро $$SIZE байт > 13 секторов"; \
+	if [ $$SIZE -gt 16384 ]; then \
+	    echo "ОШИБКА: ядро $$SIZE байт > 32 секторов"; \
 	    exit 1; \
 	fi
 
