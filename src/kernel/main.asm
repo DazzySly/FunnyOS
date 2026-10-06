@@ -1214,14 +1214,14 @@ larp_art:
     db '  |   ##     ## ##   ##   ##   ##        |', ENDL
     db '  |   #####  ## ##   ##   ##   ##        |', ENDL
     db '  |   #####  ## ##   ##   ##   ##        |', ENDL
-    db '  |     ┗━┅┅┄┄⟞⟦✮⟧⟝┄┄┉┉━┛                |', ENDL
+    db '  |                                      |', ENDL
     db '  |             ~ L A R P ~              |', ENDL
     db '  |                                      |', ENDL
     db '  |          the ancient art of          |', ENDL
     db '  |       pretending to be something     |', ENDL
     db '  |             you are not              |', ENDL
     db '  |                                      |', ENDL
-    db '  |         ✮         (lirili lariLARP)  |', ENDL
+    db '  |                   (lirili lariLARP)  |', ENDL
     db '  |                                      |', ENDL
     db '  +======================================+', ENDL, 0
 
