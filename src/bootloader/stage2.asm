@@ -12,12 +12,6 @@ bits 16
 start:
     jmp main
 
-
-;
-; выводит строку на экран
-; параметры:
-;   - ds:si указывает на строку
-;
 puts:
     push si
     push ax
