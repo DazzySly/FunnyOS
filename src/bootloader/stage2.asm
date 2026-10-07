@@ -3,13 +3,6 @@ bits 16
 
 
 %define ENDL 0x0D, 0x0A
-
-;
-; карта памяти
-;   0x1000 – 0x7BFF : ядро
-;   0x7C00 – 0x7DFF : stage1
-;   0x7E00 – 0x8BFF : stage2
-;
 %define KERNEL_LBA       8
 %define KERNEL_SECTORS   16
 %define KERNEL_LOAD_SEG  0x0000
