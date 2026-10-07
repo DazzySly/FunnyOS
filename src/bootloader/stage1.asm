@@ -9,10 +9,6 @@ bits 16
 %define STAGE2_SEG      0x0000
 %define STAGE2_OFF      0x7E00
 
-
-;
-; заголовок FAT12 (нужен для mkfs.fat и mcopy)
-;
 jmp short start
 nop
 
