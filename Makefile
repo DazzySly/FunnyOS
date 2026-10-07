@@ -70,12 +70,6 @@ run: $(FLOPPY_IMG)
 run-mute: $(FLOPPY_IMG)
 	$(QEMU) -drive file=$(FLOPPY_IMG),format=raw,if=ide
 
-
-# запуск как флоппи (для отладки старого режима)
-run-floppy: $(FLOPPY_IMG)
-	$(QEMU) -fda $(FLOPPY_IMG)
-
-
 # псевдоним для явности
 run-hdd: run
 
