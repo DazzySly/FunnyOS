@@ -1,1 +1,1 @@
-qemu-system-i386 -fda /home/dingus/os2/build/main_floppy.img
+qemu-system-i386 -fda /home/dingus/FunnyOS/build/main_floppy.img
