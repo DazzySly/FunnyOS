@@ -3,8 +3,8 @@ bits 16
 
 
 %define ENDL 0x0D, 0x0A
-%define KERNEL_LBA       8
-%define KERNEL_SECTORS   16
+%define KERNEL_LBA       3
+%define KERNEL_SECTORS   28
 %define KERNEL_LOAD_SEG  0x0000
 %define KERNEL_LOAD_OFF  0x1000
 
