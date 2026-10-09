@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+import sys
+import struct
+
+SECTOR = 512
+TOTAL = 2880
+
+KERNEL_LBA = 3
+KERNEL_SECTORS = 28
+FS_TABLE_LBA = 31
+FS_DATA_LBA = 32
+MAX_FILES = 16
+ENTRY = 32
+NAME_SIZE = 15
+
+
+def make_image(stage1_file, stage2_file, kernel_file, output):
+    img = bytearray(TOTAL * SECTOR)
+
+    # stage1 -> LBA 0
+    with open(stage1_file, 'rb') as f:
+        stage1 = f.read()
+    assert len(stage1) <= SECTOR, "stage1 > 512 bytes"
+    img[0:len(stage1)] = stage1
+
+    # stage2 -> LBA 1-2
+    with open(stage2_file, 'rb') as f:
+        stage2 = f.read()
+    assert len(stage2) <= 2 * SECTOR, "stage2 > 1 KB"
+    img[1 * SECTOR:1 * SECTOR + len(stage2)] = stage2
+
+    # kernel -> LBA 3..30
+    with open(kernel_file, 'rb') as f:
+        kernel = f.read()
+    assert len(kernel) <= KERNEL_SECTORS * SECTOR, \
+        f"kernel > {KERNEL_SECTORS * SECTOR} bytes ({KERNEL_SECTORS} sectors)"
+    img[KERNEL_LBA * SECTOR:KERNEL_LBA * SECTOR + len(kernel)] = kernel
+
+    # файлы для ФС
+    files = [
+        ("README.TXT", b"Welcome to FunnyOS!\nThis file is stored on MyFS.\n"),
+        ("HELLO.TXT",  b"Hello from MyFS!\n"),
+        ("POEM.TXT",   b"Roses are red,\nViolets are blue,\nFunnyOS runs on real hardware,\nAnd so do you.\n"),
+        ("LARP.TXT",   b"LARP is the ancient art\nof pretending to be something\nyou are not.\n"),
+    ]
+
+    table = bytearray(SECTOR)
+    data_lba = FS_DATA_LBA
+
+    for i, (name, data) in enumerate(files):
+        if i >= MAX_FILES:
+            break
+
+        off = i * ENTRY
+        name_b = name.encode('ascii')[:NAME_SIZE]
+
+        table[off:off + len(name_b)] = name_b
+        struct.pack_into('<I', table, off + 16, len(data))
+        struct.pack_into('<H', table, off + 20, data_lba)
+
+        img[data_lba * SECTOR:data_lba * SECTOR + len(data)] = data
+
+        sectors = (len(data) + SECTOR - 1) // SECTOR
+        data_lba += sectors
+
+    # таблица -> LBA 31
+    img[FS_TABLE_LBA * SECTOR:(FS_TABLE_LBA + 1) * SECTOR] = table
+
+    with open(output, 'wb') as f:
+        f.write(img)
+
+    print(f"Created {output}: {len(img)} bytes")
+    print(f"Kernel: {len(kernel)} bytes ({KERNEL_SECTORS * SECTOR} bytes available)")
+    print(f"Files: {', '.join(n for n, _ in files)}")
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 5:
+        print("Usage: mkfs.myfs <stage1.bin> <stage2.bin> <kernel.bin> <output.img>")
+        sys.exit(1)
+    make_image(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
