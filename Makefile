@@ -21,17 +21,10 @@ all: floppy_image
 
 floppy_image: $(FLOPPY_IMG)
 
-$(FLOPPY_IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN)
-	dd if=/dev/zero of=$@ bs=512 count=2880
-	mkfs.fat -F 12 -R 16 -n "NBOS" $@
-	dd if=$(STAGE1_BIN) of=$@ conv=notrunc
-	dd if=$(STAGE2_BIN) of=$@ bs=512 seek=1 conv=notrunc
-	dd if=$(KERNEL_BIN) of=$@ bs=512 seek=8 conv=notrunc
-	@echo "--- содержимое образа ---"
-	@mdir -i $@ ::
-	@echo "-------------------------"
-
-
+$(FLOPPY_IMG): $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) mkfs.myfs
+	./mkfs.myfs $(STAGE1_BIN) $(STAGE2_BIN) $(KERNEL_BIN) $@
+	@echo "--- image ready: $@ ---"
+	
 stage1: $(STAGE1_BIN)
 
 $(STAGE1_BIN): $(STAGE1_SRC)
@@ -52,8 +45,8 @@ $(KERNEL_BIN): $(KERNEL_SRC)
 	@mkdir -p $(BUILD_DIR)
 	$(ASM) $< -f bin -o $@
 	@SIZE=$$(stat -c%s $@); \
-	if [ $$SIZE -gt 8192 ]; then \
-	    echo "ОШИБКА: ядро $$SIZE байт, превышает 16 секторов (8192 байт)"; \
+	if [ $$SIZE -gt 14336 ]; then \
+	    echo "ОШИБКА: ядро $$SIZE байт, превышает 28 секторов (14336 байт)"; \
 	    exit 1; \
 	fi
 
