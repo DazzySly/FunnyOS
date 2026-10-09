@@ -10,6 +10,12 @@ bits 16
 %define SCREEN_COLS 80
 %define SCREEN_ROWS 25
 
+%define FS_TABLE_LBA    31
+%define FS_DATA_LBA     32
+%define FS_MAX_FILES    16
+%define FS_ENTRY_SIZE   32
+%define MAX_DATA_BUF    4096
+
 ; цвета
 %define C_BLACK      0x00
 %define C_BLUE       0x01
@@ -275,39 +281,6 @@ skip_spaces:
 
 
 ;
-; парсит число из SI в AX
-;
-parse_num:
-    push bx
-    push cx
-    xor bx, bx
-    xor dx, dx
-.loop:
-    mov al, [si]
-    cmp al, '0'
-    jb .done
-    cmp al, '9'
-    ja .done
-    push ax
-    mov ax, bx
-    mov cx, 10
-    mul cx
-    mov bx, ax
-    pop ax
-    sub al, '0'
-    mov ah, 0
-    add bx, ax
-    inc si
-    inc dx
-    jmp .loop
-.done:
-    mov ax, bx
-    pop cx
-    pop bx
-    ret
-
-
-;
 ; читает строку с клавиатуры
 ;
 read_line:
@@ -513,7 +486,6 @@ splash_screen:
     mov byte [color_attr], C_GRAY
     call clear_screen
 
-    ; --- рамка ---
     mov word [cursor_x], 0
     mov word [cursor_y], 0
     mov al, '+'
@@ -537,21 +509,18 @@ splash_screen:
     mov al, '+'
     call putc
 
-    ; --- FunnyOS 0.6 (по центру) ---
     mov byte [color_attr], C_LCYAN
     mov word [cursor_x], 35
     mov word [cursor_y], 12
     mov si, splash_version
     call puts
 
-    ; --- Loading ---
     mov byte [color_attr], C_GRAY
     mov word [cursor_x], 36
     mov word [cursor_y], 16
     mov si, splash_loading
     call puts
 
-    ; --- прогресс-бар ---
     mov word [cursor_x], 32
     mov word [cursor_y], 17
     mov al, '['
@@ -564,7 +533,6 @@ splash_screen:
     mov al, ']'
     call putc
 
-    ; --- анимация ---
     mov cx, 14
     mov word [progress_pos], 0
 .progress_loop:
@@ -616,9 +584,406 @@ delay_50ms:
     ret
 
 
+; =========================================================
+; Драйвер диска
+; =========================================================
+
+lba_to_chs:
+    push ax
+    push dx
+    xor dx, dx
+    div word [spt]
+    inc dx
+    mov cx, dx
+    xor dx, dx
+    div word [heads]
+    mov dh, dl
+    mov ch, al
+    shl ah, 6
+    or cl, ah
+    pop dx
+    pop ax
+    ret
+
+
 ;
-; диспетчер команд
+; читает 1 сектор: ax=LBA, es:bx=буфер
 ;
+disk_read:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+
+    mov di, bx
+    call lba_to_chs
+    mov dl, [disk_num]
+    mov al, 1
+    mov ah, 0x02
+    mov bx, di
+    mov di, 3
+
+.retry:
+    pusha
+    stc
+    int 0x13
+    jnc .done
+    popa
+    call disk_reset
+    dec di
+    test di, di
+    jnz .retry
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    stc
+    ret
+
+.done:
+    popa
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    clc
+    ret
+
+
+;
+; пишет 1 сектор: ax=LBA, es:bx=буфер
+;
+disk_write:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+
+    mov di, bx
+    call lba_to_chs
+    mov dl, [disk_num]
+    mov al, 1
+    mov ah, 0x03
+    mov bx, di
+    mov di, 3
+
+.retry:
+    pusha
+    stc
+    int 0x13
+    jnc .done
+    popa
+    call disk_reset
+    dec di
+    test di, di
+    jnz .retry
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    stc
+    ret
+
+.done:
+    popa
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    clc
+    ret
+
+
+disk_reset:
+    pusha
+    mov ah, 0
+    stc
+    int 0x13
+    popa
+    ret
+
+
+; =========================================================
+; MyFS
+; =========================================================
+
+fs_load:
+    push bx
+    push es
+    push word 0
+    pop es
+    mov bx, fs_table
+    mov ax, FS_TABLE_LBA
+    call disk_read
+    pop es
+    pop bx
+    ret
+
+
+fs_save:
+    push bx
+    push es
+    push word 0
+    pop es
+    mov bx, fs_table
+    mov ax, FS_TABLE_LBA
+    call disk_write
+    pop es
+    pop bx
+    ret
+
+
+;
+; поиск файла: si=имя, di=запись или 0
+;
+fs_find:
+    push si
+    push cx
+    mov di, fs_table
+    mov cx, FS_MAX_FILES
+.search:
+    cmp byte [di], 0
+    je .not_found
+    cmp byte [di], 0xE5
+    je .next
+    push si
+    push di
+    call fs_name_cmp
+    pop di
+    pop si
+    jc .found
+.next:
+    add di, FS_ENTRY_SIZE
+    loop .search
+.not_found:
+    xor di, di
+.found:
+    pop cx
+    pop si
+    ret
+
+
+;
+; сравнение имён: si, di; CF=1 если равны
+;
+fs_name_cmp:
+    push si
+    push di
+.loop:
+    mov al, [si]
+    mov bl, [di]
+    cmp al, 'A'
+    jb .a
+    cmp al, 'Z'
+    ja .a
+    or al, 0x20
+.a:
+    cmp bl, 'A'
+    jb .b
+    cmp bl, 'Z'
+    ja .b
+    or bl, 0x20
+.b:
+    cmp al, bl
+    jne .no
+    test al, al
+    jz .yes
+    inc si
+    inc di
+    jmp .loop
+.yes:
+    pop di
+    pop si
+    stc
+    ret
+.no:
+    pop di
+    pop si
+    clc
+    ret
+
+
+;
+; свободная запись: di или 0
+;
+fs_free_slot:
+    mov di, fs_table
+    mov cx, FS_MAX_FILES
+.search:
+    cmp byte [di], 0
+    je .found
+    cmp byte [di], 0xE5
+    je .found
+    add di, FS_ENTRY_SIZE
+    loop .search
+    xor di, di
+.found:
+    ret
+
+
+;
+; свободный LBA после всех файлов: ax
+;
+fs_free_sector:
+    push bx
+    push cx
+    push dx
+    push di
+    mov ax, FS_DATA_LBA
+    mov bx, fs_table
+    mov cx, FS_MAX_FILES
+.scan:
+    cmp byte [bx], 0
+    je .next
+    cmp byte [bx], 0xE5
+    je .next
+    mov dx, [bx + 20]
+    mov di, [bx + 16]
+    add di, 511
+    shr di, 9
+    add dx, di
+    cmp dx, ax
+    jbe .next
+    mov ax, dx
+.next:
+    add bx, FS_ENTRY_SIZE
+    loop .scan
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    ret
+
+
+;
+; создание файла: si=имя, di=данные, cx=размер
+;
+fs_create:
+    push ax
+    push bx
+    push cx
+    push dx
+    push di
+    push si
+    push es
+
+    mov [tmp_name], si
+    mov [tmp_data], di
+    mov [tmp_size], cx
+
+    mov si, [tmp_name]
+    call fs_find
+    test di, di
+    jnz .err
+
+    call fs_free_slot
+    test di, di
+    jz .err
+
+    mov bx, di
+
+    mov si, [tmp_name]
+    mov di, bx
+    mov cx, 15
+.cp_name:
+    lodsb
+    stosb
+    test al, al
+    jz .name_ok
+    loop .cp_name
+    mov byte [di], 0
+.name_ok:
+
+    mov ax, [tmp_size]
+    mov [bx + 16], ax
+
+    call fs_free_sector
+    mov [bx + 20], ax
+
+    push word 0
+    pop es
+    mov si, [tmp_data]
+    mov cx, [tmp_size]
+    add cx, 511
+    shr cx, 9
+.wr:
+    push cx
+    push ax
+    push si
+    mov bx, si
+    call disk_write
+    pop si
+    pop ax
+    pop cx
+    add si, 512
+    inc ax
+    loop .wr
+
+    call fs_save
+
+    pop es
+    pop si
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    clc
+    ret
+
+.err:
+    pop es
+    pop si
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    stc
+    ret
+
+
+;
+; удаление файла: si=имя
+;
+fs_delete:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    call fs_find
+    test di, di
+    jz .err
+    mov byte [di], 0xE5
+    call fs_save
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    clc
+    ret
+.err:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    stc
+    ret
+
+
+; =========================================================
+; Диспетчер команд
+; =========================================================
+
 process_command:
     cmp byte [buffer], 0
     je .ret
@@ -627,6 +992,26 @@ process_command:
     mov di, cmd_help_str
     call strcmp_ci
     jc cmd_help
+
+    mov si, buffer
+    mov di, cmd_ls_str
+    call strcmp_ci
+    jc cmd_ls
+
+    mov si, buffer
+    mov di, cmd_cat_str
+    call starts_with
+    jc cmd_cat
+
+    mov si, buffer
+    mov di, cmd_write_str
+    call starts_with
+    jc cmd_write
+
+    mov si, buffer
+    mov di, cmd_rm_str
+    call starts_with
+    jc cmd_rm
 
     mov si, buffer
     mov di, cmd_clear_str
@@ -711,9 +1096,10 @@ process_command:
     ret
 
 
-;
-; команды
-;
+; =========================================================
+; Команды
+; =========================================================
+
 cmd_help:
     mov byte [color_attr], C_LCYAN
     mov si, msg_help_body
@@ -770,7 +1156,223 @@ cmd_ver:
 
 
 ;
-; команда color
+; ls — список файлов
+;
+cmd_ls:
+    call fs_load
+    mov di, fs_table
+    mov cx, FS_MAX_FILES
+    xor bx, bx
+.loop:
+    cmp byte [di], 0
+    je .done
+    cmp byte [di], 0xE5
+    je .next
+    inc bx
+
+    push cx
+    push di
+    mov si, di
+.pn:
+    lodsb
+    test al, al
+    jz .nm_done
+    call putc
+    jmp .pn
+.nm_done:
+    mov ax, si
+    sub ax, di
+    mov cx, 20
+    sub cx, ax
+    jc .nopad
+.pad:
+    mov al, ' '
+    call putc
+    loop .pad
+.nopad:
+    pop di
+    pop cx
+
+    mov ax, [di + 16]
+    call print_dec
+    mov al, ' '
+    call putc
+    mov al, 'B'
+    call putc
+    mov al, 0x0D
+    call putc
+    mov al, 0x0A
+    call putc
+.next:
+    add di, FS_ENTRY_SIZE
+    loop .loop
+.done:
+    test bx, bx
+    jnz .ret
+    mov si, msg_no_files
+    call puts
+.ret:
+    ret
+
+
+;
+; cat <file>
+;
+cmd_cat:
+    mov si, buffer
+    add si, 3
+    call skip_spaces
+    cmp byte [si], 0
+    je .usage
+    call fs_load
+    call fs_find
+    test di, di
+    jz .nf
+    mov cx, [di + 16]
+    test cx, cx
+    jz .done
+    mov ax, [di + 20]
+.rd:
+    push cx
+    push ax
+    push word 0
+    pop es
+    mov bx, data_buffer
+    call disk_read
+    pop ax
+    pop cx
+    mov si, data_buffer
+    mov dx, 512
+    cmp cx, dx
+    jb .short
+    mov dx, cx
+.short:
+    lodsb
+    call putc
+    dec dx
+    jnz .short
+    sub cx, 512
+    jbe .done
+    inc ax
+    jmp .rd
+.done:
+    mov al, 0x0D
+    call putc
+    mov al, 0x0A
+    call putc
+    ret
+.nf:
+    mov byte [color_attr], C_LRED
+    mov si, msg_not_found
+    call puts
+    mov byte [color_attr], C_GRAY
+    ret
+.usage:
+    mov byte [color_attr], C_LRED
+    mov si, msg_cat_usage
+    call puts
+    mov byte [color_attr], C_GRAY
+    ret
+
+
+;
+; write <file> <text>
+;
+cmd_write:
+    mov si, buffer
+    add si, 5
+    call skip_spaces
+    cmp byte [si], 0
+    je .usage
+
+    mov di, write_name
+    mov cx, 15
+.cn:
+    mov al, [si]
+    test al, al
+    jz .usage
+    cmp al, ' '
+    je .cn_done
+    stosb
+    inc si
+    loop .cn
+.cn_done:
+    mov byte [di], 0
+    call skip_spaces
+    cmp byte [si], 0
+    je .usage
+
+    mov di, data_buffer
+    xor cx, cx
+.cd:
+    mov al, [si]
+    test al, al
+    jz .cd_done
+    stosb
+    inc si
+    inc cx
+    cmp cx, MAX_DATA_BUF
+    jb .cd
+.cd_done:
+    mov byte [di], 0
+
+    call fs_load
+    mov si, write_name
+    mov di, data_buffer
+    call fs_create
+    jc .err
+    mov byte [color_attr], C_LGREEN
+    mov si, msg_saved
+    call puts
+    mov byte [color_attr], C_GRAY
+    ret
+.err:
+    mov byte [color_attr], C_LRED
+    mov si, msg_write_err
+    call puts
+    mov byte [color_attr], C_GRAY
+    ret
+.usage:
+    mov byte [color_attr], C_LRED
+    mov si, msg_write_usage
+    call puts
+    mov byte [color_attr], C_GRAY
+    ret
+
+
+;
+; rm <file>
+;
+cmd_rm:
+    mov si, buffer
+    add si, 2
+    call skip_spaces
+    cmp byte [si], 0
+    je .usage
+    call fs_load
+    call fs_delete
+    jc .err
+    mov byte [color_attr], C_LGREEN
+    mov si, msg_deleted
+    call puts
+    mov byte [color_attr], C_GRAY
+    ret
+.err:
+    mov byte [color_attr], C_LRED
+    mov si, msg_not_found
+    call puts
+    mov byte [color_attr], C_GRAY
+    ret
+.usage:
+    mov byte [color_attr], C_LRED
+    mov si, msg_rm_usage
+    call puts
+    mov byte [color_attr], C_GRAY
+    ret
+
+
+;
+; color <0-15>
 ;
 cmd_color:
     push ax
@@ -826,7 +1428,7 @@ cmd_color:
 
 
 ;
-; команда calc
+; calc <a> <op> <b>
 ;
 cmd_calc:
     push ax
@@ -1100,6 +1702,39 @@ boot_melody:
 
 
 ;
+; парсит число из SI в AX
+;
+parse_num:
+    push bx
+    push cx
+    xor bx, bx
+    xor dx, dx
+.loop:
+    mov al, [si]
+    cmp al, '0'
+    jb .done
+    cmp al, '9'
+    ja .done
+    push ax
+    mov ax, bx
+    mov cx, 10
+    mul cx
+    mov bx, ax
+    pop ax
+    sub al, '0'
+    mov ah, 0
+    add bx, ax
+    inc si
+    inc dx
+    jmp .loop
+.done:
+    mov ax, bx
+    pop cx
+    pop bx
+    ret
+
+
+;
 ; main
 ;
 main:
@@ -1156,12 +1791,16 @@ main:
 ;
 
 prompt:         db 'FunnyOS> ', 0
-msg_welcome_1:  db 'FunnyOS 0.6', ENDL
+msg_welcome_1:  db 'FunnyOS v1.0', ENDL
 msg_welcome_2:  db 'Type "help" for commands.', ENDL, ENDL, 0
 
 msg_help_title: db 'Commands:', ENDL, 0
 msg_help_body:  db '  echo <text>       - print text', ENDL
-                db '  calc <a> <op> <b> - calculator (* + - /) 65535 - max', ENDL
+                db '  ls                - list files', ENDL
+                db '  cat <file>        - print file', ENDL
+                db '  write <f> <text>  - create file', ENDL
+                db '  rm <file>         - delete file', ENDL
+                db '  calc <a> <op> <b> - calculator (* + - / %) 65535 - max', ENDL
                 db '  larp              - GIGA larp', ENDL
                 db '  mem               - show memory size', ENDL
                 db '  beep [hz] [ms]    - beep boop', ENDL
@@ -1183,9 +1822,18 @@ msg_calc_usage:  db 'Usage: calc <a> <op> <b>', ENDL
                  db 'Ops: * + - / %', ENDL, 0
 msg_calc_result: db '= ', 0
 msg_div_zero:    db 'Error: division by zero', ENDL, 0
-msg_ver:        db 'FunnyOS 0.6', ENDL
+msg_no_files:    db 'No files.', ENDL, 0
+msg_not_found:   db 'File not found.', ENDL, 0
+msg_saved:       db 'Saved.', ENDL, 0
+msg_deleted:     db 'Deleted.', ENDL, 0
+msg_write_err:   db 'Write error.', ENDL, 0
+msg_cat_usage:   db 'Usage: cat <file>', ENDL, 0
+msg_write_usage: db 'Usage: write <file> <text>', ENDL, 0
+msg_rm_usage:    db 'Usage: rm <file>', ENDL, 0
+msg_ver:        db 'FunnyOS 1.0', ENDL
                 db 'Boot: BIOS, 2-stage loader, USB-HDD', ENDL
                 db 'Display: VGA text 80x25 direct', ENDL
+                db 'Filesystem: MyFS', ENDL
                 db 'Build: ', __DATE__, ' ', __TIME__, ENDL, 0
 
 cmd_echo_str:    db 'echo', 0
@@ -1200,8 +1848,12 @@ cmd_calc_str:    db 'calc', 0
 cmd_ver_str:     db 'ver', 0
 cmd_reboot_str:  db 'reboot', 0
 cmd_history_str: db 'history', 0
+cmd_ls_str:      db 'ls', 0
+cmd_cat_str:     db 'cat', 0
+cmd_write_str:   db 'write', 0
+cmd_rm_str:      db 'rm', 0
 
-splash_version: db 'FunnyOS v0.6', 0
+splash_version: db 'FunnyOS 1.0', 0
 splash_loading: db 'Loading...', 0
 
 larp_art:
@@ -1229,6 +1881,8 @@ larp_art:
 ; переменные и буферы
 ;
 disk_num:        db 0
+spt:             dw 18
+heads:           dw 2
 
 cursor_x:        dw 0
 cursor_y:        dw 0
@@ -1240,7 +1894,16 @@ calc_a:          dw 0
 calc_b:          dw 0
 calc_op:         db 0
 
+tmp_name:        dw 0
+tmp_data:        dw 0
+tmp_size:        dw 0
+
+write_name:      times 16 db 0
+
 buffer:          times MAX_CMD db 0
 cur_pos:         dw 0
 hist_pos:        dw HIST_SIZE
 hist_buf:        times HIST_SIZE * MAX_CMD db 0
+
+fs_table:        times 512 db 0
+data_buffer:     times MAX_DATA_BUF db 0
